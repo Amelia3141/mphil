@@ -79,9 +79,14 @@ class TorchOrdinalSustain(OrdinalSustain):
             raise AttributeError("Could not find sustainData attribute. Available attributes: " +
                                str([attr for attr in dir(self) if 'sustain' in attr.lower()]))
 
-        # Create PyTorch-enabled data object
+        # Create PyTorch-enabled data object using PROCESSED data from parent class
+        # The parent class OrdinalSustain processes prob_score (transposes, filters, reshapes)
+        # We need to use the processed versions, not the original input parameters
         self.torch_sustain_data = create_torch_ordinal_data(
-            prob_nl, prob_score, sustain_data.getNumStages(), self.torch_backend
+            sustain_data.prob_nl,      # Use processed data
+            sustain_data.prob_score,   # Use processed data (now shape M x N, not M x B x num_scores)
+            sustain_data.getNumStages(),
+            self.torch_backend
         )
 
         # Create GPU-accelerated likelihood calculator
