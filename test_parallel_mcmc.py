@@ -117,9 +117,10 @@ def compare_serial_vs_parallel(prob_nl, prob_score, score_vals, biomarker_labels
         # Get data object
         sustain_data = getattr(sustain, '_OrdinalSustain__sustainData')
 
-        # Initialize sequence and fractions
-        N_stages = sustain_data.getNumStages()
-        S_init = np.random.permutation(N_stages).astype(float).reshape(1, -1)
+        # Initialize sequence and fractions using proper OrdinalSustain method
+        # OrdinalSustain requires sequences where each biomarker's stages are in increasing order
+        rng = np.random.default_rng(42)
+        S_init = sustain._initialise_sequence(sustain_data, rng).reshape(1, -1)
         f_init = np.array([1.0])
 
         # Run uncertainty estimation (this is where MCMC happens)
@@ -199,8 +200,10 @@ def benchmark_different_chain_counts(prob_nl, prob_score, score_vals, biomarker_
 
     # Get data
     sustain_data = getattr(sustain, '_OrdinalSustain__sustainData')
-    N_stages = sustain_data.getNumStages()
-    S_init = np.random.permutation(N_stages).astype(float).reshape(1, -1)
+
+    # Initialize sequence using proper OrdinalSustain method
+    rng = np.random.default_rng(42)
+    S_init = sustain._initialise_sequence(sustain_data, rng).reshape(1, -1)
     f_init = np.array([1.0])
 
     # Run benchmark
