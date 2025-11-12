@@ -480,8 +480,17 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
 
                 # Compute probabilities using GPU-accelerated operations
                 if abnormal_indices.numel() > 0:
+                    # Ensure abnormal_indices is 1D (handles case of single element)
+                    if abnormal_indices.dim() == 0:
+                        abnormal_indices = abnormal_indices.unsqueeze(0)
+
                     # Select prob_score columns for abnormal biomarkers
                     prob_abnormal = prob_score_tensor[:, abnormal_indices]  # (M, num_abnormal)
+
+                    # Ensure 2D shape even if only 1 column selected
+                    if prob_abnormal.dim() == 1:
+                        prob_abnormal = prob_abnormal.unsqueeze(1)
+
                     prod_prob_abnormal = torch.prod(prob_abnormal, dim=1)  # (M,)
                 else:
                     prod_prob_abnormal = torch.ones(M, device=self.device, dtype=self.dtype)
@@ -489,6 +498,11 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
                 if bool_IS_normal.any():
                     # Select prob_nl columns for normal biomarkers
                     prob_normal = prob_nl_tensor[:, bool_IS_normal]  # (M, num_normal)
+
+                    # Ensure 2D shape even if only 1 column selected
+                    if prob_normal.dim() == 1:
+                        prob_normal = prob_normal.unsqueeze(1)
+
                     prod_prob_normal = torch.prod(prob_normal, dim=1)  # (M,)
                 else:
                     prod_prob_normal = torch.ones(M, device=self.device, dtype=self.dtype)
