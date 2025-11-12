@@ -113,7 +113,8 @@ def validate_correctness(prob_nl, prob_score, score_vals, biomarker_labels,
         return False
 
     # Test with random sequences
-    N = score_vals.shape[0] * (score_vals.shape[1] - 1)
+    # Get the actual number of stages from the sustain object
+    N = cpu_sustain_data.getNumStages()
     all_passed = True
 
     for test_idx in range(n_tests):
@@ -182,11 +183,6 @@ def benchmark_performance(prob_nl, prob_score, score_vals, biomarker_labels,
     print(f"  - Scores: {prob_score.shape[2]}")
     print(f"  - Iterations: {n_iterations}")
 
-    # Create test sequence
-    N = score_vals.shape[0] * (score_vals.shape[1] - 1)
-    S_test = np.random.permutation(N).astype(float)
-    f_test = np.array([1.0])
-
     # Benchmark CPU
     print("\n" + "-" * 80)
     print("Benchmarking CPU implementation...")
@@ -197,6 +193,11 @@ def benchmark_performance(prob_nl, prob_score, score_vals, biomarker_labels,
         1, 1, 100, "./temp", "cpu_test", False, 42
     )
     cpu_sustain_data = getattr(cpu_sustain, '_OrdinalSustain__sustainData', None)
+
+    # Create test sequence using actual number of stages
+    N = cpu_sustain_data.getNumStages()
+    S_test = np.random.permutation(N).astype(float)
+    f_test = np.array([1.0])
 
     cpu_times = []
     for i in range(n_iterations):
