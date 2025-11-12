@@ -8,3 +8,4 @@ from .OrdinalSustain import *
 from .ZScoreSustainMissingData import *
 from .TorchZScoreSustainMissingData import *
 from .TorchOrdinalSustain import *
+from .ParallelOrdinalSustain import *
