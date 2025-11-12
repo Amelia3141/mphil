@@ -1,0 +1,22 @@
+# NumPyro dependencies for SuStaIn MCMC acceleration
+# Install with: pip install -r requirements_numpyro.txt
+
+# Core NumPyro and JAX
+numpyro>=0.13.0
+jax>=0.4.0
+jaxlib>=0.4.0
+
+# Optional: GPU support (uncomment if you have CUDA)
+# jax[cuda]>=0.4.0
+
+# Optional: Additional NumPyro features
+# numpyro[dev]>=0.13.0
+
+# Note: For GPU support, you may also need:
+# - CUDA toolkit (version 11.8 or 12.0)
+# - cuDNN library
+# - Proper GPU drivers
+
+# Installation commands:
+# CPU only: pip install numpyro jax jaxlib
+# GPU support: pip install numpyro jax[cuda] jaxlib
