@@ -165,7 +165,7 @@ class ParallelOrdinalSustain(OrdinalSustain):
         print(f"  Est. serial time: {serial_time_estimate:.2f}s")
         print(f"  Speedup: {speedup:.2f}x")
         print(f"  Efficiency: {stats['efficiency']*100:.1f}%")
-        print(f"  Best likelihood: {ml_likelihood:.4f}")
+        print(f"  Best likelihood: {float(ml_likelihood):.4f}")
         print(f"{'='*70}\n")
 
         return ml_sequence, ml_f, ml_likelihood, combined_sequences, combined_fs, combined_likelihoods
