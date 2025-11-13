@@ -122,11 +122,13 @@ class ParallelOrdinalSustain(OrdinalSustain):
         # Get MCMC settings from parent class
         seq_sigma_opt, f_sigma_opt = self._optimise_mcmc_settings(sustainData, S_init, f_init)
 
-        # Handle case where sigma values might be arrays
-        seq_sigma_val = float(seq_sigma_opt) if np.ndim(seq_sigma_opt) == 0 else float(seq_sigma_opt[0])
-        f_sigma_val = float(f_sigma_opt) if np.ndim(f_sigma_opt) == 0 else float(f_sigma_opt[0])
-
-        print(f"MCMC settings: seq_sigma={seq_sigma_val:.4f}, f_sigma={f_sigma_val:.4f}")
+        # Print MCMC settings (handle arrays safely)
+        try:
+            seq_sigma_val = np.asarray(seq_sigma_opt).flatten()[0]
+            f_sigma_val = np.asarray(f_sigma_opt).flatten()[0]
+            print(f"MCMC settings: seq_sigma={seq_sigma_val:.4f}, f_sigma={f_sigma_val:.4f}")
+        except:
+            print(f"MCMC settings: seq_sigma={seq_sigma_opt}, f_sigma={f_sigma_opt}")
 
         # Run parallel MCMC
         samples_sequences_list, samples_fs_list, samples_likelihoods_list, chain_times = \
