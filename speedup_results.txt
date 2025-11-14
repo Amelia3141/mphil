@@ -1,0 +1,17 @@
+================================================================================
+QUICK PROCESS-BASED PARALLEL MCMC SPEEDUP TEST
+================================================================================
+
+Generating test data: 8000 subjects, 13 biomarkers
+
+Testing with 500 MCMC iterations per chain
+
+================================================================================
+TEST 1: Serial (1 chain)
+================================================================================
+Traceback (most recent call last):
+  File "/home/user/mphil/quick_speedup_test.py", line 72, in <module>
+    serial_sustain.run_sustain_algorithm()
+  File "/home/user/mphil/pySuStaIn/AbstractSustain.py", line 136, in run_sustain_algorithm
+    os.mkdir(pickle_dir)
+FileNotFoundError: [Errno 2] No such file or directory: './temp_serial/pickle_files'

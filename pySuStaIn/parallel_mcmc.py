@@ -108,10 +108,18 @@ class ParallelMCMCManager:
 
             # We need to extract the numpy arrays from the sustain instance
             # instead of passing the complex object
-            if hasattr(sustain_instance, 'prob_nl') and hasattr(sustain_instance, 'prob_score'):
-                # Extract the data we need
-                prob_nl = sustain_instance.prob_nl
-                prob_score = sustain_instance.prob_score
+            # For OrdinalSustain, prob_nl/prob_score are in the private __sustainData attribute
+            if hasattr(sustain_data, 'prob_nl') and hasattr(sustain_data, 'prob_score'):
+                # Extract from sustain_data (OrdinalSustainData object)
+                prob_nl = sustain_data.prob_nl
+                prob_score = sustain_data.prob_score
+                score_vals = sustain_instance.score_vals
+                biomarker_labels = sustain_instance.biomarker_labels
+            elif hasattr(sustain_instance, '_OrdinalSustain__sustainData'):
+                # Try to get from the private __sustainData attribute
+                sustain_data_obj = sustain_instance._OrdinalSustain__sustainData
+                prob_nl = sustain_data_obj.prob_nl
+                prob_score = sustain_data_obj.prob_score
                 score_vals = sustain_instance.score_vals
                 biomarker_labels = sustain_instance.biomarker_labels
             else:

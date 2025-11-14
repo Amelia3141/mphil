@@ -1,0 +1,19 @@
+================================================================================
+QUICK PROCESS-BASED PARALLEL MCMC SPEEDUP TEST
+================================================================================
+
+Generating test data: 8000 subjects, 13 biomarkers
+
+Testing with 500 MCMC iterations per chain
+
+================================================================================
+TEST 1: Serial (1 chain)
+================================================================================
+Traceback (most recent call last):
+  File "/home/user/mphil/quick_speedup_test.py", line 45, in <module>
+    serial_sustain = OrdinalSustain(
+                     ^^^^^^^^^^^^^^^
+  File "/home/user/mphil/pySuStaIn/OrdinalSustain.py", line 102, in __init__
+    prob_score = prob_score.transpose(0,2,1)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: axes don't match array
