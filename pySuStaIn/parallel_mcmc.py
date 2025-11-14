@@ -99,16 +99,55 @@ class ParallelMCMCManager:
         
         return results
     
-    def _run_process_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
+    def _run_process_parallel(self, sustain_instance, sustain_data, seq_init, f_init,
                             n_iterations, seq_sigma, f_sigma, seeds):
-        """Run MCMC chains using process-based parallelism."""
-        # For process-based parallelism, we need to avoid pickling complex objects
-        # Instead, we'll use a simpler approach that works with the existing structure
-        
-        print("Process-based parallelism requires careful handling of object serialization.")
-        print("Falling back to thread-based parallelism for compatibility.")
-        return self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init, 
-                                       n_iterations, seq_sigma, f_sigma, seeds)
+        """Run MCMC chains using TRUE process-based parallelism (escapes GIL!)."""
+        # Import the real multiprocessing implementation
+        try:
+            from .process_parallel_mcmc import ProcessParallelMCMCManager
+
+            # We need to extract the numpy arrays from the sustain instance
+            # instead of passing the complex object
+            if hasattr(sustain_instance, 'prob_nl') and hasattr(sustain_instance, 'prob_score'):
+                # Extract the data we need
+                prob_nl = sustain_instance.prob_nl
+                prob_score = sustain_instance.prob_score
+                score_vals = sustain_instance.score_vals
+                biomarker_labels = sustain_instance.biomarker_labels
+            else:
+                print("Warning: Could not extract data from sustain instance")
+                print("Falling back to thread-based parallelism")
+                return self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init,
+                                               n_iterations, seq_sigma, f_sigma, seeds)
+
+            # Create process-based manager
+            process_manager = ProcessParallelMCMCManager(
+                n_chains=self.n_chains,
+                n_workers=self.n_workers
+            )
+
+            # Run with TRUE multiprocessing (escapes GIL!)
+            samples_sequences, samples_fs, samples_likelihoods, chain_times = \
+                process_manager.run_parallel_mcmc(
+                    prob_nl=prob_nl,
+                    prob_score=prob_score,
+                    score_vals=score_vals,
+                    biomarker_labels=biomarker_labels,
+                    S_init=seq_init,
+                    f_init=f_init,
+                    n_iterations=n_iterations,
+                    seq_sigma=seq_sigma,
+                    f_sigma=f_sigma,
+                    seeds=seeds
+                )
+
+            return samples_sequences, samples_fs, samples_likelihoods, chain_times
+
+        except ImportError as e:
+            print(f"Warning: Could not import ProcessParallelMCMCManager: {e}")
+            print("Falling back to thread-based parallelism")
+            return self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init,
+                                           n_iterations, seq_sigma, f_sigma, seeds)
     
     def _run_thread_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
                            n_iterations, seq_sigma, f_sigma, seeds):
