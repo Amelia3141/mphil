@@ -1,0 +1,7 @@
+
+# Test output files
+speedup_*.txt
+quick_speedup_test.py
+test_process_parallel.py
+temp_serial/
+temp_parallel/
