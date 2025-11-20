@@ -101,7 +101,7 @@ class TorchOrdinalSustain(OrdinalSustain):
         the same interface as the original implementation.
 
         Args:
-            sustainData: SuStaIn data object
+            sustainData: SuStaIn data object (may be subset via reindex)
             S: Sequence matrix (N_S, N)
             f: Fraction vector (N_S,)
 
@@ -111,8 +111,27 @@ class TorchOrdinalSustain(OrdinalSustain):
         # Use GPU-accelerated computation if available
         if self.use_gpu:
             try:
+                # Check if sustainData is a subset of the full dataset
+                M_subset = sustainData.getNumSamples()
+                M_full = self.torch_sustain_data.getNumSamples()
+
+                # Determine which torch data object to use
+                if M_subset < M_full:
+                    # sustainData is a subset - need to create TorchOrdinalSustainData from it
+                    from .torch_data_classes import TorchOrdinalSustainData
+                    torch_data_subset = TorchOrdinalSustainData(
+                        sustainData.prob_nl,
+                        sustainData.prob_score,
+                        sustainData.getNumStages(),
+                        self.torch_backend
+                    )
+                    data_to_use = torch_data_subset
+                else:
+                    # Use full dataset
+                    data_to_use = self.torch_sustain_data
+
                 return self.torch_likelihood_calculator.calculate_likelihood(
-                    self.torch_sustain_data, S, f
+                    data_to_use, S, f
                 )
             except RuntimeError as e:
                 if "out of memory" in str(e):
@@ -131,18 +150,37 @@ class TorchOrdinalSustain(OrdinalSustain):
         GPU-accelerated stage likelihood computation.
 
         Args:
-            sustainData: SuStaIn data object
+            sustainData: SuStaIn data object (may be subset via reindex)
             S: Single sequence (N,)
 
         Returns:
-            Likelihood array (M, N+1)
+            Likelihood array (M, N+1) where M is number of subjects in sustainData
         """
         if self.use_gpu:
             try:
+                # Check if sustainData is a subset of the full dataset
+                M_subset = sustainData.getNumSamples()
+                M_full = self.torch_sustain_data.getNumSamples()
+
+                # Determine which torch data object to use
+                if M_subset < M_full:
+                    # sustainData is a subset - need to create TorchOrdinalSustainData from it
+                    from .torch_data_classes import TorchOrdinalSustainData
+                    torch_data_subset = TorchOrdinalSustainData(
+                        sustainData.prob_nl,
+                        sustainData.prob_score,
+                        sustainData.getNumStages(),
+                        self.torch_backend
+                    )
+                    data_to_use = torch_data_subset
+                else:
+                    # Use full dataset
+                    data_to_use = self.torch_sustain_data
+
                 # Convert to PyTorch tensor and compute
                 S_torch = self.torch_backend.to_torch(S)
                 result_torch = self.torch_likelihood_calculator._calculate_likelihood_stage_torch(
-                    self.torch_sustain_data, S_torch
+                    data_to_use, S_torch
                 )
                 return self.torch_backend.to_numpy(result_torch)
             except RuntimeError as e:
