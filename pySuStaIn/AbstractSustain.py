@@ -124,7 +124,7 @@ class AbstractSustain(ABC):
                 print("Warning: ThreadPoolExecutor not available, using serial execution")
         else:
             self.pool = None
-            self.pool.ncpus = 1
+            self.ncpus = 1  # Store ncpus on self when pool is None
 
     #********************* PUBLIC METHODS
     def run_sustain_algorithm(self, plot=False, plot_format="png", **kwargs):
@@ -597,7 +597,8 @@ class AbstractSustain(ABC):
                     except:
                         prob_ml_subtype[i]  = this_prob_subtype[this_subtype[0][0]]
 
-            this_prob_stage                 = np.squeeze(prob_subtype_stage[i, :, int(ml_subtype[i])])
+            subtype_idx = int(ml_subtype[i].item()) if hasattr(ml_subtype[i], 'item') else int(ml_subtype[i])
+            this_prob_stage                 = np.squeeze(prob_subtype_stage[i, :, subtype_idx])
             
             if (np.sum(np.isnan(this_prob_stage)) == 0):
                 # this_stage = 

@@ -187,7 +187,7 @@ class OrdinalSustain(AbstractSustain):
 
         for j in range(N):
             index_justreached = int(S[j])
-            biomarker_justreached = int(self.stage_biomarker_index[:,index_justreached])
+            biomarker_justreached = int(self.stage_biomarker_index[0, index_justreached])
             index_reached[biomarker_justreached] = index_justreached
             IS_normal[biomarker_justreached] = 0
             IS_abnormal[biomarker_justreached] = 1
@@ -277,13 +277,13 @@ class OrdinalSustain(AbstractSustain):
                 if np.any(min_filter):
                     min_score_bound        = max(possible_scores_biomarker[min_filter])
                     min_score_bound_event  = events[((self.stage_score[0] == min_score_bound).astype(int) + (self.stage_biomarker_index[0] == selected_biomarker).astype(int)) == 2]
-                    move_event_to_lower_bound = current_location[min_score_bound_event] + 1
+                    move_event_to_lower_bound = int(current_location[min_score_bound_event][0]) + 1 if len(min_score_bound_event) > 0 else 0
                 else:
                     move_event_to_lower_bound = 0
                 if np.any(max_filter):
                     max_score_bound        = min(possible_scores_biomarker[max_filter])
                     max_score_bound_event  = events[((self.stage_score[0] == max_score_bound).astype(int) + (self.stage_biomarker_index[0] == selected_biomarker).astype(int)) == 2]
-                    move_event_to_upper_bound = current_location[max_score_bound_event]
+                    move_event_to_upper_bound = int(current_location[max_score_bound_event][0]) if len(max_score_bound_event) > 0 else N
                 else:
                     move_event_to_upper_bound = N
                     # FIXME: hack because python won't produce an array in range (N,N), while matlab will produce an array (N)... urgh
@@ -403,14 +403,14 @@ class OrdinalSustain(AbstractSustain):
                     if np.any(min_filter):
                         min_score_bound            = max(possible_scores_biomarker[min_filter])
                         min_score_bound_event      = events[((self.stage_score[0] == min_score_bound).astype(int) + (self.stage_biomarker_index[0] == selected_biomarker).astype(int)) == 2]
-                        move_event_to_lower_bound   = current_location[min_score_bound_event] + 1
+                        move_event_to_lower_bound   = int(current_location[min_score_bound_event][0]) + 1 if len(min_score_bound_event) > 0 else 0
                     else:
                         move_event_to_lower_bound   = 0
 
                     if np.any(max_filter):
                         max_score_bound            = min(possible_scores_biomarker[max_filter])
                         max_score_bound_event      = events[((self.stage_score[0] == max_score_bound).astype(int) + (self.stage_biomarker_index[0] == selected_biomarker).astype(int)) == 2]
-                        move_event_to_upper_bound   = current_location[max_score_bound_event]
+                        move_event_to_upper_bound   = int(current_location[max_score_bound_event][0]) if len(max_score_bound_event) > 0 else N
                     else:
                         move_event_to_upper_bound   = N
 
@@ -432,10 +432,10 @@ class OrdinalSustain(AbstractSustain):
                     weight                  /= np.sum(weight)
                     index                   = self.global_rng.choice(range(len(possible_positions)), 1, replace=True, p=weight)  # FIXME: difficult to check this because random.choice is different to Matlab randsample
 
-                    move_event_to           = possible_positions[index]
+                    move_event_to           = int(possible_positions[index[0]])
 
                     current_sequence        = np.delete(current_sequence, move_event_from, 0)
-                    new_sequence            = np.concatenate([current_sequence[np.arange(move_event_to)], [selected_event], current_sequence[np.arange(move_event_to, N - 1)]])
+                    new_sequence            = np.concatenate([current_sequence[:move_event_to], [selected_event], current_sequence[move_event_to:]])
                     samples_sequence[s, :, i] = new_sequence
 
                 new_f                       = samples_f[:, i - 1] + f_sigma * self.global_rng.standard_normal()
