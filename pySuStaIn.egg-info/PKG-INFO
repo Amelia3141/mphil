@@ -1,0 +1,36 @@
+Metadata-Version: 2.4
+Name: pySuStaIn
+Version: 0.1
+Summary: Python implementation of the SuStaIn algorithm
+Home-page: https://github.com/ucl-pond/pySuStaIn
+Maintainer: Leon Aksman
+Maintainer-email: l.aksman@ucl.ac.uk
+License: TBC
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python
+Classifier: Topic :: Scientific/Engineering
+Classifier: Programming Language :: Python :: 3.7
+Requires-Python: >=3.7
+License-File: LICENSE.txt
+Requires-Dist: numpy>=1.18
+Requires-Dist: scipy
+Requires-Dist: matplotlib>=3.0.0
+Requires-Dist: pathos
+Requires-Dist: dill==0.3.5.1
+Requires-Dist: scikit-learn
+Requires-Dist: pandas
+Requires-Dist: pybind11
+Requires-Dist: awkde@ git+https://github.com/noxtoby/awkde.git
+Requires-Dist: kde_ebm@ git+https://github.com/ucl-pond/kde_ebm.git
+Requires-Dist: tqdm
+Requires-Dist: torch>=1.12.0
+Requires-Dist: torchvision
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: license
+Dynamic: license-file
+Dynamic: maintainer
+Dynamic: maintainer-email
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
