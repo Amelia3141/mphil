@@ -363,8 +363,12 @@ class OrdinalSustain(AbstractSustain):
 
         return S_opt, f_opt, likelihood_opt
 
-    def _perform_mcmc(self, sustainData, seq_init, f_init, n_iterations, seq_sigma, f_sigma):
+    def _perform_mcmc(self, sustainData, seq_init, f_init, n_iterations, seq_sigma, f_sigma, rng=None):
         # Take MCMC samples of the uncertainty in the SuStaIn model parameters
+
+        # Use provided rng or fall back to global_rng for backward compatibility
+        if rng is None:
+            rng = self.global_rng
 
         N                                   = self.stage_score.shape[1]
         N_S                                 = seq_init.shape[0]
@@ -383,9 +387,9 @@ class OrdinalSustain(AbstractSustain):
 
         for i in tqdm(range(n_iterations), "MCMC Iteration", n_iterations, miniters=tqdm_update_iters):
             if i > 0:
-                seq_order                   = self.global_rng.permutation(N_S)  # this function returns different random numbers to Matlab
+                seq_order                   = rng.permutation(N_S)  # this function returns different random numbers to Matlab
                 for s in seq_order:
-                    move_event_from         = int(np.ceil(N * self.global_rng.random())) - 1
+                    move_event_from         = int(np.ceil(N * rng.random())) - 1
                     current_sequence        = samples_sequence[s, :, i - 1]
 
                     current_location        = np.array([0] * N)
@@ -430,7 +434,7 @@ class OrdinalSustain(AbstractSustain):
                     # use own normal PDF because stats.norm is slow
                     weight                  = AbstractSustain.calc_coeff(this_seq_sigma) * AbstractSustain.calc_exp(distance, 0., this_seq_sigma)
                     weight                  /= np.sum(weight)
-                    index                   = self.global_rng.choice(range(len(possible_positions)), 1, replace=True, p=weight)  # FIXME: difficult to check this because random.choice is different to Matlab randsample
+                    index                   = rng.choice(range(len(possible_positions)), 1, replace=True, p=weight)  # FIXME: difficult to check this because random.choice is different to Matlab randsample
 
                     move_event_to           = int(possible_positions[index[0]])
 
@@ -438,7 +442,7 @@ class OrdinalSustain(AbstractSustain):
                     new_sequence            = np.concatenate([current_sequence[:move_event_to], [selected_event], current_sequence[move_event_to:]])
                     samples_sequence[s, :, i] = new_sequence
 
-                new_f                       = samples_f[:, i - 1] + f_sigma * self.global_rng.standard_normal()
+                new_f                       = samples_f[:, i - 1] + f_sigma * rng.standard_normal()
                 new_f                       = (np.fabs(new_f) / np.sum(np.fabs(new_f)))
                 samples_f[:, i]             = new_f
 
@@ -449,7 +453,7 @@ class OrdinalSustain(AbstractSustain):
 
             if i > 0:
                 ratio                           = np.exp(samples_likelihood[i] - samples_likelihood[i - 1])
-                if ratio < self.global_rng.random():
+                if ratio < rng.random():
                     samples_likelihood[i]       = samples_likelihood[i - 1]
                     samples_sequence[:, :, i]   = samples_sequence[:, :, i - 1]
                     samples_f[:, i]             = samples_f[:, i - 1]

@@ -290,8 +290,12 @@ class MixtureSustain(AbstractSustain):
 
         return S_opt, f_opt, likelihood_opt
 
-    def _perform_mcmc(self, sustainData, seq_init, f_init, n_iterations, seq_sigma, f_sigma):
+    def _perform_mcmc(self, sustainData, seq_init, f_init, n_iterations, seq_sigma, f_sigma, rng=None):
         # Take MCMC samples of the uncertainty in the SuStaIn model parameters
+
+        # Use provided rng or fall back to global_rng for backward compatibility
+        if rng is None:
+            rng = self.global_rng
 
         M                                   = sustainData.getNumSamples()
         N                                   = sustainData.getNumStages()
@@ -311,11 +315,11 @@ class MixtureSustain(AbstractSustain):
 
         for i in tqdm(range(n_iterations), "MCMC Iteration", n_iterations, miniters=tqdm_update_iters):
             if i > 0:
-                seq_order                   = self.global_rng.permutation(N_S)
+                seq_order                   = rng.permutation(N_S)
                 # this function returns different random numbers to Matlab
 
                 # Abstract out seq_order loop
-                move_event_from = np.ceil(N * self.global_rng.random(len(seq_order))).astype(int) - 1
+                move_event_from = np.ceil(N * rng.random(len(seq_order))).astype(int) - 1
                 current_sequence = samples_sequence[seq_order, :, i - 1]
 
                 selected_event = current_sequence[np.arange(current_sequence.shape[0]), move_event_from]
@@ -327,7 +331,7 @@ class MixtureSustain(AbstractSustain):
                 weight = AbstractSustain.calc_coeff(seq_sigma) * AbstractSustain.calc_exp(distance, 0., seq_sigma)
                 weight = np.divide(weight, weight.sum(1)[:, None])
 
-                index = [self.global_rng.choice(np.arange(len(row)), 1, replace=True, p=row)[0] for row in weight]
+                index = [rng.choice(np.arange(len(row)), 1, replace=True, p=row)[0] for row in weight]
 
                 move_event_to = np.arange(N)[index]
 
@@ -339,7 +343,7 @@ class MixtureSustain(AbstractSustain):
 
                 samples_sequence[seq_order, :, i] = new_seq
 
-                new_f                       = samples_f[:, i - 1] + f_sigma * self.global_rng.standard_normal()
+                new_f                       = samples_f[:, i - 1] + f_sigma * rng.standard_normal()
                 # TEMP: MATLAB comparison
                 #new_f                       = samples_f[:, i - 1] + f_sigma * stats.norm.ppf(np.random.rand(1,N_S))
 
@@ -394,7 +398,7 @@ class MixtureSustain(AbstractSustain):
 
             if i > 0:
                 ratio                           = np.exp(samples_likelihood[i] - samples_likelihood[i - 1])
-                if ratio < self.global_rng.random():
+                if ratio < rng.random():
                     samples_likelihood[i]       = samples_likelihood[i - 1]
                     samples_sequence[:, :, i]   = samples_sequence[:, :, i - 1]
                     samples_f[:, i]             = samples_f[:, i - 1]

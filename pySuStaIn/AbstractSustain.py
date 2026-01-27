@@ -1032,8 +1032,16 @@ class AbstractSustain(ABC):
         # samples_f         - samples of the proportion of individuals belonging to each subtype obtained from MCMC sampling
         # samples_likeilhood - samples of the likelihood of each SuStaIn model sampled by the MCMC sampling
 
+        # Spawn a deterministic seed for MCMC based on the ML sequence found
+        # This ensures reproducibility regardless of how EM converged (parallel vs sequential)
+        # The seed is derived from a hash of the initial sequence, making MCMC deterministic
+        # given the same starting point
+        seq_hash = hash(seq_init.tobytes()) & 0xFFFFFFFF  # Convert to positive 32-bit int
+        mcmc_seed = np.random.SeedSequence(self.seed ^ seq_hash)
+        mcmc_rng = np.random.default_rng(mcmc_seed)
+
         # Perform a few initial passes where the perturbation sizes of the MCMC uncertainty estimation are tuned
-        seq_sigma_opt, f_sigma_opt          = self._optimise_mcmc_settings(sustainData, seq_init, f_init)
+        seq_sigma_opt, f_sigma_opt          = self._optimise_mcmc_settings(sustainData, seq_init, f_init, mcmc_rng)
 
         # Run the full MCMC algorithm to estimate the uncertainty
         ml_sequence,        \
@@ -1041,11 +1049,11 @@ class AbstractSustain(ABC):
         ml_likelihood,      \
         samples_sequence,   \
         samples_f,          \
-        samples_likelihood                  = self._perform_mcmc(sustainData, seq_init, f_init, self.N_iterations_MCMC, seq_sigma_opt, f_sigma_opt)
+        samples_likelihood                  = self._perform_mcmc(sustainData, seq_init, f_init, self.N_iterations_MCMC, seq_sigma_opt, f_sigma_opt, mcmc_rng)
 
         return ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood
 
-    def _optimise_mcmc_settings(self, sustainData, seq_init, f_init):
+    def _optimise_mcmc_settings(self, sustainData, seq_init, f_init, rng=None):
 
         # Optimise the perturbation size for the MCMC algorithm
         n_iterations_MCMC_optimisation      = int(1e4)  # FIXME: set externally
@@ -1064,7 +1072,8 @@ class AbstractSustain(ABC):
                                                                                                      f_init,
                                                                                                      n_iterations_MCMC_optimisation,
                                                                                                      seq_sigma_currentpass,
-                                                                                                     f_sigma_currentpass)
+                                                                                                     f_sigma_currentpass,
+                                                                                                     rng)
 
             samples_position_currentpass    = np.zeros(samples_sequence_currentpass.shape)
             for s in range(N_S):
@@ -1129,7 +1138,7 @@ class AbstractSustain(ABC):
         pass
 
     @abstractmethod
-    def _perform_mcmc(self, sustainData, seq_init, f_init, n_iterations, seq_sigma, f_sigma):
+    def _perform_mcmc(self, sustainData, seq_init, f_init, n_iterations, seq_sigma, f_sigma, rng=None):
         pass
 
     @abstractmethod
