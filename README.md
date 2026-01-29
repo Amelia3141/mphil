@@ -1,129 +1,201 @@
-pySuStaIn
-============
+# Ordinal SuStaIn for EDS/HSD Subtyping
 
-**Su**btype and **St**age **In**ference, or SuStaIn, is an algorithm for discovery of data-driven groups or "subtypes" in chronic disorders. This repository is the Python implementation of SuStaIn, with the option to describe the subtype progression patterns using either the event-based model, the piecewise linear z-score model or the scored events model.
+This repository contains code for applying Ordinal SuStaIn to EDS/HSD registry data, developed as part of an MPhil thesis at UCL Institute of Health Informatics.
 
-Acknowledgement
-================
-If you use pySuStaIn, please cite the following core papers:
-1. [The original SuStaIn paper](https://doi.org/10.1038/s41467-018-05892-0)
-2. [The pySuStaIn software paper](https://doi.org/10.1016/j.softx.2021.100811)
+## Paper Reference
 
-Please also cite the corresponding progression pattern model you use:
-1. [The piecewise linear z-score model (i.e. ZscoreSustain)](https://doi.org/10.1038/s41467-018-05892-0)
-2. [The event-based model (i.e. MixtureSustain)](https://doi.org/10.1016/j.neuroimage.2012.01.062) 
-   with [Gaussian mixture modelling](https://doi.org/10.1093/brain/awu176) 
-   or [kernel density estimation](https://doi.org/10.1002/alz.12083)).
-3. [The scored events model (i.e. OrdinalSustain)](https://doi.org/10.3389/frai.2021.613261)   
-   
-Thanks a lot for supporting this project.
+*Phenotypic Subtypes in Ehlers-Danlos Syndrome: A Data-Driven Approach Using Ordinal SuStaIn*
+MPhil Thesis, University College London (in progress)
 
-Installation
-============
-## Install option 1 (for installing the pySuStaIn code in a chosen directory): clone repository, install locally
+Supervised by Dr Ken Li and Dr Watjana Lilaonitkul.
 
-1) Clone this repo: [cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository)
+## Updates
 
-2) Navigate to the main pySuStaIn directory (where you see setup.py, README.txt, LICENSE.txt, and all subfolders), then run:
+**2026-01-27**: Added known-structure recovery test (Experiment 2) and parallel/sequential equivalence test (Experiment 4).
 
-       pip install .
+**2026-01-26**: Rebuilt synthetic data generator to remove circular validation. Previously, subtypes were pre-encoded then "discovered" by SuStaIn (circular). New generator creates DICE-like correlation structure WITHOUT ground truth subtypes.
 
-    Alternatively, you can do `pip install -e .` where the `-e` flag allows you to make edits to the code without reinstalling.
+**2026-01-26**: Added pre-specified clinical meaningfulness criteria with citations (Steinley 2004, Vinh 2010, Young 2018).
 
-Either way, it will install everything listed in `requirements.txt`, including the [awkde](https://github.com/mennthor/awkde) package (used for mixture modelling). 
+## Requirements
 
-### Possible errors during installation
+- Python >= 3.9
+- pySuStaIn (from ucl-pond/pySuStaIn)
+- numpy, pandas, scipy, scikit-learn
 
-- During the installation of `awkde`, an error may appear, but then the installation _should_ continue and be successful. Note that you need `pip` version 18.1+ for this installation to work.
-
-## Install option 2 (for simply using pySuStaIn as a package): direct install from repository
-
-1) Run the following command to directly install pySuStaIn:
-
-       pip install git+https://github.com/ucl-pond/pySuStaIn
-
-To create a new environment, follow the instructions in the [Troubleshooting](#troubleshooting) section below.
-
-Troubleshooting
-============
-
-If the above install breaks, you may have some interfering packages installed. One way around this would be to create a new [Anaconda](https://www.anaconda.com) environment that uses Python 3.7+, then activate it and repeat the installation steps above. To do this, download and install Anaconda/Miniconda, then run:
-
-```
-conda create --name sustain_env 'python>3.6'
-conda activate sustain_env
+Install via:
+```bash
+pip install -r requirements.txt
 ```
 
-To create an environment named `sustain_env`. Then, follow the installation instructions above as normal.
+## Quick Start
 
-
-
-Dependencies
-============
-- Python >= 3.7
-- [setuptools](https://pypi.org/project/setuptools/)
-- [NumPy](https://github.com/numpy/numpy) >= 1.18
-- [SciPy](https://github.com/scipy/scipy)
-- [Matplotlib](https://github.com/matplotlib/matplotlib)
-- [Scikit-learn](https://scikit-learn.org) for cross-validation
-- [kde_ebm](https://github.com/noxtoby/kde_ebm_open) for mixture modelling (KDE and GMM included)
-   - [awkde](https://github.com/mennthor/awkde) for KDE mixture modelling
-- [pathos](https://github.com/uqfoundation/pathos) for parallelization
-
-Testing
-===============
-If you want to check that the installation was successful, you can run the end-to-end tests. For this, you will need to navigate to the `tests/` subfolder (wherever pySuStaIn has been installed on your system). Then, you can use the following command to run all SuStaIn variants (this may take a bit of time!):
-
-```
-python validation.py -f
+### 1. Generate synthetic DICE-like data (NO ground truth subtypes):
+```bash
+python generate_dice_like_data.py --n_patients 5000 --seed 42 --output dice_synthetic.csv
 ```
 
-For a quicker run (using just `MixtureSustain`), just use:
+### 2. Run SuStaIn analysis:
+```bash
+python run_sustain_dice_data.py --input dice_synthetic.csv --n_subtypes_max 4 \
+    --n_startpoints 25 --n_iterations 50000 --output sustain_results/
 ```
-python validation.py
+
+### 3. Evaluate clinical meaningfulness:
+```bash
+python evaluate_sustain_results.py --data dice_synthetic.csv \
+    --pickle_dir sustain_results/pickle_files --n_subtypes 2
 ```
-instead. Testing of single classes is possible using the `-c` flag, e.g. `python validation.py -c ordinal`. To see all options, run `python validation.py --help`.
 
+### 4. Run bootstrap stability analysis:
+```bash
+python run_bootstrap_stability.py --input dice_synthetic.csv --n_bootstrap 100 \
+    --output bootstrap_results/
+```
 
-Parallelization
-===============
-- Added parallelized startpoints
+## Validation Experiments
 
-Running different SuStaIn implementations
-===============
-sustainType can be set to:
-  - `mixture_GMM` : SuStaIn with an event-based model progression pattern, with Gaussian mixture modelling of normal/abnormal.
-  - `mixture_KDE`:  SuStaIn with an event-based model progression pattern, with Kernel Density Estimation (KDE) mixture modelling of normal/abnormal.
-  - `zscore`:       SuStaIn with a piecewise linear z-score model progression pattern.
-  
- See `simrun.py` for examples of how to run these different implementations.
+### Experiment 1: Null Data Test
+Demonstrates that SuStaIn finds "subtypes" in data without ground truth, but pre-specified criteria correctly reject them as artefacts.
 
-SuStaIn Tutorial
-===============  
-See the jupyter notebook in the notebooks folder for a tutorial on how to use SuStaIn using simulated data.
-We also have a set of tutorial videos on YouTube, which you can find [here](https://www.youtube.com/watch?v=5CFsfFcVzEc&list=PL25fUWY3exLxYSPOnEe60kSEh0JRdVVPB).
+```bash
+python generate_dice_like_data.py -n 5000 -o null_data.csv
+python run_sustain_dice_data.py -i null_data.csv -o null_results/ --n_subtypes_max 3
+python evaluate_sustain_results.py -d null_data.csv -p null_results/pickle_files -n 2
+```
 
-Papers
-============
-Methods:
-- The SuStaIn algorithm: [Young et al. 2018](https://doi.org/10.1038/s41467-018-05892-0) 
-- The pySuStaIn software paper: [Aksman, Wijeratne et al. 2021](https://doi.org/10.1016/j.softx.2021.100811)
-- The event-based model: [Fonteijn et al. 2012](https://doi.org/10.1016/j.neuroimage.2012.01.062), (with Gaussian mixture modelling [Young et al. 2014](https://doi.org/10.1093/brain/awu176) or non-parametric kernel density estimation [Firth et al. 2020](https://doi.org/10.1002/alz.12083))
-- The piecewise linear z-score model: [Young et al. 2018](https://doi.org/10.1038/s41467-018-05892-0) 
-- The scored events model ('Ordinal SuStaIn'): [Young et al. 2021](https://doi.org/10.3389/frai.2021.613261)  
+**Expected result**: Criterion 2 (Cohen's d >= 0.5 on >= 3 domains) FAILS.
 
+### Experiment 2: Known Structure Recovery
+Verifies SuStaIn can recover genuine subtypes when they exist.
 
-Applications:
-- Multiple sclerosis (predicting treatment response): [Eshaghi et al. 2021](https://doi.org/10.1038/s41467-021-22265-2). The trained model is available [here](https://github.com/armaneshaghi/trained_models_MS_SuStaIn). 
-- Tau PET data in Alzheimer's disease: [Vogel et al. 2021](https://doi.org/10.1038/s41591-021-01309-6)
-- COPD: [Young and Bragman et al. 2020](https://doi.org/10.1164/rccm.201908-1600OC)
-- Frontotemporal dementia: [Young et al. 2021](https://doi.org/10.1212/WNL.0000000000012410)
+```bash
+python generate_known_subtypes_data.py -n 2000 -s 3 -o known_data.csv --ground_truth known_truth.csv
+python run_known_subtypes_validation.py -d known_data.csv -g known_truth.csv -o known_results/
+```
 
-Funding
-================
-This project has received funding from the European Union’s Horizon 2020 Research and Innovation Programme under Grant Agreements 666992. Application of SuStaIn to multiple sclerosis was supported by the International Progressive MS Alliance (IPMSA, award reference number PA-1603-08175).
+**Expected result**: ARI >= 0.8 between predicted and true subtypes.
 
-Quotes
-============
-> _(The authors) have also persuaded me that (SuStaIn is) as clever as e.g. Heiko Braak's brain, (and) can infer longitudinal trajectories based on cross-sectional observations._
-> - Anonymous reviewer
+### Experiment 3: Bootstrap Stability
+Tests reproducibility across resampled data.
+
+```bash
+python run_bootstrap_stability.py -i dice_synthetic.csv -n 100 -o bootstrap_results/
+```
+
+**Expected result**: Mean ARI >= 0.6 for stable subtypes.
+
+### Experiment 4: Parallel vs Sequential Equivalence
+Verifies parallelization doesn't affect results.
+
+```bash
+python run_parallel_sequential_test.py -d dice_synthetic.csv -n 500 -o equiv_test/
+```
+
+**Expected result**: ARI > 0.99 between parallel and sequential runs.
+
+## Results on Synthetic DICE-like Data
+
+Results on n=5,000 synthetic patients with NO ground truth subtypes:
+
+| Criterion | Threshold | Result | Status |
+|-----------|-----------|--------|--------|
+| 1. Prevalence | >= 10% | 48.0% min | PASS |
+| 2. Distinctiveness | d >= 0.5 on >= 3 domains | d = 0.27 max | FAIL |
+| 3. Bootstrap stability | ARI >= 0.6 | PENDING | - |
+| 4. Model selection | Best n by CVIC | PENDING | - |
+| 5. Not severity-only | r < 0.7 with burden | r = 0.047 | PASS |
+| 6. Plausible sequences | Manual review | See output | - |
+
+**Interpretation**: SuStaIn identifies subtypes in null data, but pre-specified criteria correctly identify them as artefacts (failing distinctiveness criterion). This validates the approach.
+
+## File Structure
+
+```
+.
+├── generate_dice_like_data.py          # Synthetic data generator (NO subtypes)
+├── generate_known_subtypes_data.py     # Validation data generator (WITH subtypes)
+├── run_sustain_dice_data.py            # Main SuStaIn analysis
+├── run_known_subtypes_validation.py    # Experiment 2: known structure recovery
+├── run_bootstrap_stability.py          # Experiment 3: bootstrap stability
+├── run_parallel_sequential_test.py     # Experiment 4: equivalence test
+├── evaluate_sustain_results.py         # Clinical meaningfulness evaluation
+├── validate_correlations.py            # Correlation matrix validation
+│
+├── DICE_VARIABLE_MAPPING.md            # Variable definitions with prevalence citations
+├── CLINICAL_MEANINGFULNESS_CRITERIA.md # Pre-specified evaluation criteria
+├── COX_REGRESSION_FRAMEWORK.md         # Outcome validation plan
+├── VERIFICATION_SUMMARY.md             # All validation test results
+│
+├── data/
+│   └── dice_synthetic_v2.csv           # Generated null data (n=5000)
+│
+├── pySuStaIn/                          # Modified pySuStaIn with MCMC determinism fix
+└── tests/                              # Validation tests
+```
+
+## Key Design Decisions
+
+### Why Pre-Specified Criteria?
+
+SuStaIn will always find patterns (it's designed to). The scientific question is whether those patterns are clinically meaningful. Pre-specifying criteria BEFORE seeing results prevents:
+- Post-hoc rationalization
+- p-hacking via criterion selection
+- Circular validation
+
+### Why Correlation-Based Synthetic Data?
+
+The DICE Registry has known symptom correlations (e.g., fatigue-pain r~0.5). Synthetic data preserves this structure without encoding subtypes, creating a realistic "null" dataset.
+
+### Domain Definitions
+
+Domains are based on standard EDS clinical categorization (Tinkle et al. 2017), NOT derived from SuStaIn results:
+
+- **Musculoskeletal**: joint_pain, subluxations, joint_hypermobility
+- **Autonomic**: dysautonomia_pots, gi_symptoms
+- **Neurological**: headaches_migraines, cognitive_fog
+- **Mental Health**: anxiety, depression
+- **Constitutional**: fatigue, chronic_pain, sleep_disturbance
+
+## Validation
+
+See `VERIFICATION_SUMMARY.md` for complete validation results:
+- No hidden subtype structure in generator (silhouette < 0.11)
+- Correlation matrix validated (target-observed r = 0.991)
+- Maximum correlation < 0.8 (actual max = 0.581)
+- Parallel/sequential equivalence verified (MCMC determinism fix applied)
+
+## Hardware and Timing
+
+Development performed on MacBook Pro M2 (16GB RAM).
+
+Typical run times for n=5,000 patients:
+- 1 subtype model: ~30 minutes
+- 2 subtype model: ~60 minutes
+- 3 subtype model: ~90 minutes
+- Full analysis (1-4 subtypes): ~4 hours
+
+For production runs on real DICE data (n~45,000), UCL cluster access recommended.
+
+## Citation
+
+If you use this code, please cite:
+
+```
+@phdthesis{[author]2026,
+  title={Phenotypic Subtypes in Ehlers-Danlos Syndrome: A Data-Driven Approach},
+  author={[Author]},
+  year={2026},
+  school={University College London}
+}
+```
+
+Also cite:
+- Aksman LM, Wijeratne PA, et al. (2021). pySuStaIn: A Python implementation of the SuStaIn algorithm. SoftwareX.
+- Young AL, et al. (2021). Ordinal SuStaIn: Subtype and Stage Inference for clinical scores, visual ratings, and other discrete data. Frontiers in Artificial Intelligence.
+
+## Acknowledgments
+
+- Supervised by Dr Ken Li and Dr Watjana Lilaonitkul, UCL Institute of Health Informatics
+- Data access pending from The Ehlers-Danlos Society DICE Global Registry
+- Built on pySuStaIn from UCL POND group
