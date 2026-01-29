@@ -1,23 +1,8 @@
-# Instructions: Fixing Synthetic Data Generation and SuStaIn Validation
-
-## Critical Problem Summary
-
-The current synthetic data generator (`generate_eds_sustain_data.py`) is fundamentally flawed. It encodes pre-defined subtypes via `define_progression_sequences()`, then SuStaIn "discovers" exactly what was put in. This circular validation proves nothing about whether the algorithm works on real clinical data or finds clinically meaningful structure.
-
----
+# Instructions: Generating Synthetic Data for Ordinal Sustain
 
 ## Part 1: Rebuild the Synthetic Data Generator
 
-### 1.1 What the Generator Must NOT Do
-
-Delete the entire `define_progression_sequences()` function and all code that assigns patients to pre-defined progression pathways. Specifically remove:
-
-- The three subtype sequence definitions (musculoskeletal-dominant, dysautonomia-dominant, MCAS-dominant)
-- The `get_biomarker_state_at_stage()` function that deterministically sets biomarker values based on stage
-- The `subtype_true` and `stage_true` columns in output (there is no ground truth to compare against)
-- Any concept of "stages" as a progression along a predefined sequence
-
-### 1.2 What the Generator MUST Do
+### 1.1 Generation of cross-sectional data
 
 Generate cross-sectional data that mimics DICE Registry structure:
 
@@ -27,7 +12,7 @@ Generate cross-sectional data that mimics DICE Registry structure:
 4. **Add appropriate missingness patterns** (not just MCAR; include MAR based on clinical logic)
 5. **Let SuStaIn find whatever structure exists** in this realistic but not pre-structured data
 
-### 1.3 DICE Registry Variable Mapping
+### 1.2 DICE Registry Variable Mapping
 
 Based on DICE_DataGuide.pdf, here are the relevant sections and variables you need to implement. Note: DICE uses categorical/binary responses, not 0-3 severity scales. You'll need to either:
 - (A) Generate DICE-format data then convert to ordinal scores for SuStaIn, or
@@ -143,7 +128,7 @@ Based on DICE_DataGuide.pdf, here are the relevant sections and variables you ne
 - Frequent nosebleeds
 - Swollen lymph nodes
 
-### 1.4 Prevalence Rates to Use
+### 1.3 Prevalence Rates to Use
 
 Use these from literature (cite Hakim et al. 2017, Tinkle et al. 2017, DICE publications):
 
@@ -162,7 +147,7 @@ Use these from literature (cite Hakim et al. 2017, Tinkle et al. 2017, DICE publ
 | Urinary symptoms | 30-50% |
 | Skin fragility/easy bruising | 60-80% |
 
-### 1.5 Correlation Structure
+### 1.4 Correlation Structure
 
 Model these known clinical associations:
 
@@ -183,7 +168,7 @@ Model these known clinical associations:
 **Implementation approach:**
 Use a multivariate normal distribution with a specified correlation matrix, then convert to ordinal via thresholds. Alternatively, use copulas to model dependencies while maintaining correct marginals.
 
-### 1.6 Missingness Patterns
+### 1.5 Missingness Patterns
 
 DICE registry missingness is not purely MCAR. Model:
 
@@ -192,7 +177,7 @@ DICE registry missingness is not purely MCAR. Model:
 - **MCAR noise:** ~5-10% random missingness across all variables
 - **Section-based missingness:** If someone doesn't complete a section, all variables in that section are missing
 
-### 1.7 Output Format
+### 1.6 Output Format
 
 The synthetic data output should:
 - Use DICE-like column names (or document the mapping clearly)
