@@ -456,7 +456,9 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
            tensor, then use the index matrix to gather all needed columns for all
            stages at once via advanced indexing + a mask, sum them, and exp.
 
-        Total GPU ops: 2 logs, 1 cat, 1 gather, 1 masked scatter, 1 sum, 1 exp.
+        Total GPU ops per call: 1 gather, 1 mask, 1 sum, 1 exp (4 kernels).
+        The 2 logs + 1 cat for log_combined are cached on the data object and
+        computed only once per sustainData — reused across all MCMC iterations.
         No Python loop, no per-stage kernel launch, no per-stage tensor creation.
 
         Args:
@@ -470,10 +472,6 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
             N = self.stage_score.shape[1]
             M = sustainData.getNumSamples()
             B = sustainData.getNumBiomarkers()
-
-            # Get data tensors (cached on GPU after first access)
-            prob_nl_tensor = sustainData.get_prob_nl_torch()        # (M, B)
-            prob_score_tensor = sustainData.get_prob_score_torch()   # (M, N_events)
 
             # ---- Step 1: Precompute index matrix on CPU ----
             S_np = S_single.cpu().numpy().astype(int) if S_single.is_cuda else S_single.numpy().astype(int)
@@ -520,14 +518,9 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
 
             # ---- Step 2: Single batched GPU computation ----
 
-            # Compute logs once
-            log_prob_score = torch.log(prob_score_tensor + 1e-250)  # (M, N_events)
-            log_prob_nl = torch.log(prob_nl_tensor + 1e-250)        # (M, B)
-
-            # Concatenate into one tensor: (M, N_events + B)
-            # Column i < N → log_prob_score[:, i]
-            # Column i >= N → log_prob_nl[:, i - N]
-            log_combined = torch.cat([log_prob_score, log_prob_nl], dim=1)  # (M, N+B)
+            # Get cached log_combined — computed once per sustainData object,
+            # reused across all MCMC iterations (saves 2 logs + 1 cat per call)
+            log_combined = sustainData.get_log_combined_torch()  # (M, N+B)
 
             # Transfer index matrix to GPU (one small transfer: (N+1) x max_cols int64)
             gather_idx_t = torch.tensor(gather_indices, device=self.device, dtype=torch.long)

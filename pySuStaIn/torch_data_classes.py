@@ -236,7 +236,32 @@ class TorchOrdinalSustainData(TorchAbstractSustainData):
     def get_prob_score_torch(self) -> torch.Tensor:
         """Get prob_score as PyTorch tensor."""
         return self.to_torch('prob_score')
-    
+
+    def get_log_combined_torch(self) -> torch.Tensor:
+        """Get cached log(prob_score) | log(prob_nl) concatenated tensor.
+
+        This tensor is identical across all MCMC iterations for the same
+        data, so computing it once and caching saves 2 log ops + 1 cat
+        per _calculate_likelihood_stage call (~1ms on T4 GPU).
+
+        Returns:
+            Tensor of shape (M, N_events + B) where columns 0..N-1 are
+            log(prob_score) and columns N..N+B-1 are log(prob_nl).
+        """
+        cached = self._torch_tensors.get('log_combined')
+        if cached is not None:
+            return cached
+
+        prob_score_t = self.get_prob_score_torch()
+        prob_nl_t = self.get_prob_nl_torch()
+        import torch
+        log_combined = torch.cat([
+            torch.log(prob_score_t + 1e-250),
+            torch.log(prob_nl_t + 1e-250)
+        ], dim=1)
+        self._torch_tensors['log_combined'] = log_combined
+        return log_combined
+
     def get_prob_nl_numpy(self) -> np.ndarray:
         """Get prob_nl as numpy array."""
         return self.get_numpy_array('prob_nl')

@@ -565,12 +565,14 @@ def main():
             {"n_subjects": 1000, "n_biomarkers": 10},
             {"n_subjects": 2000, "n_biomarkers": 15},
             {"n_subjects": 5000, "n_biomarkers": 19},  # DICE-scale
+            {"n_subjects": 15000, "n_biomarkers": 19}, # Large-scale
         ]
 
         pipeline_configs = [
             {"n_subjects": 200, "n_biomarkers": 10, "n_iterations": 2000, "n_startpoints": 5},
             {"n_subjects": 500, "n_biomarkers": 15, "n_iterations": 5000, "n_startpoints": 10},
             {"n_subjects": 1000, "n_biomarkers": 19, "n_iterations": 5000, "n_startpoints": 10},
+            {"n_subjects": 5000, "n_biomarkers": 19, "n_iterations": 5000, "n_startpoints": 10},
         ]
 
         benchmark_likelihood_stage(likelihood_configs)
