@@ -17,30 +17,34 @@ import time
 class DeviceManager:
     """Manages GPU/CPU device selection and tensor operations."""
     
-    def __init__(self, use_gpu: bool = True, device_id: Optional[int] = None):
+    def __init__(self, use_gpu: bool = True, device_id: Optional[int] = None,
+                 force_float64: bool = False):
         """
         Initialize device manager.
-        
+
         Args:
             use_gpu: Whether to attempt GPU usage
             device_id: Specific GPU device ID (None for auto-selection)
+            force_float64: Use float64 on GPU for exact CPU equivalence (slower but no precision loss)
         """
         self.use_gpu = use_gpu and torch.cuda.is_available()
         self.device_id = device_id
-        
+
         if self.use_gpu:
             if device_id is not None:
                 self.device = torch.device(f'cuda:{device_id}')
             else:
                 self.device = torch.device('cuda')
-            self.torch_dtype = torch.float32  # Use float32 for better GPU performance
-            print(f"GPU Backend: Using CUDA device {self.device}")
+            # float64 on GPU gives exact CPU equivalence; float32 is faster for production
+            self.torch_dtype = torch.float64 if force_float64 else torch.float32
+            dtype_str = 'float64' if force_float64 else 'float32'
+            print(f"GPU Backend: Using CUDA device {self.device} ({dtype_str})")
         else:
             self.device = torch.device('cpu')
             self.torch_dtype = torch.float64  # Use float64 for CPU to maintain precision
             if use_gpu:
                 warnings.warn("GPU requested but CUDA not available. Falling back to CPU.")
-            print("GPU Backend: Using CPU device")
+            print("GPU Backend: Using CPU device (float64)")
     
     def to_torch(self, np_array: Union[np.ndarray, list, tuple], requires_grad: bool = False) -> torch.Tensor:
         """Convert numpy array to PyTorch tensor on the appropriate device."""
@@ -89,17 +93,18 @@ class DeviceManager:
 class TorchSustainBackend:
     """Main backend class for GPU-accelerated SuStaIn computations."""
     
-    def __init__(self, use_gpu: bool = True, device_id: Optional[int] = None, 
-                 memory_efficient: bool = True):
+    def __init__(self, use_gpu: bool = True, device_id: Optional[int] = None,
+                 memory_efficient: bool = True, force_float64: bool = False):
         """
         Initialize the PyTorch backend.
-        
+
         Args:
             use_gpu: Whether to use GPU acceleration
             device_id: Specific GPU device ID
             memory_efficient: Whether to use memory-efficient operations
+            force_float64: Use float64 on GPU for exact CPU equivalence
         """
-        self.device_manager = DeviceManager(use_gpu, device_id)
+        self.device_manager = DeviceManager(use_gpu, device_id, force_float64=force_float64)
         self.memory_efficient = memory_efficient
         self.use_gpu = self.device_manager.use_gpu
         
@@ -246,9 +251,10 @@ class TorchMissingDataHandler:
         return result
 
 
-def create_torch_backend(use_gpu: bool = True, device_id: Optional[int] = None) -> TorchSustainBackend:
+def create_torch_backend(use_gpu: bool = True, device_id: Optional[int] = None,
+                         force_float64: bool = False) -> TorchSustainBackend:
     """Factory function to create a TorchSustainBackend instance."""
-    return TorchSustainBackend(use_gpu=use_gpu, device_id=device_id)
+    return TorchSustainBackend(use_gpu=use_gpu, device_id=device_id, force_float64=force_float64)
 
 
 # Utility functions for common operations
