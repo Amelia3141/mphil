@@ -446,8 +446,18 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
         """
         GPU-accelerated version of OrdinalSustain._calculate_likelihood_stage().
 
-        Precomputes all stage masks on CPU, then does a single batched GPU
-        computation for all N+1 stages at once using cumulative log-sums.
+        Fully vectorized — NO Python loop on the GPU path. Strategy:
+
+        1. (CPU) Walk sequence S to build a padded index matrix: for each of the
+           N+1 stages, which columns of a combined [log_prob_score | log_prob_nl]
+           tensor to sum. This is pure index arithmetic, takes microseconds.
+
+        2. (GPU) Concatenate log_prob_score and log_prob_nl into one (M, N_events+B)
+           tensor, then use the index matrix to gather all needed columns for all
+           stages at once via advanced indexing + a mask, sum them, and exp.
+
+        Total GPU ops: 2 logs, 1 cat, 1 gather, 1 masked scatter, 1 sum, 1 exp.
+        No Python loop, no per-stage kernel launch, no per-stage tensor creation.
 
         Args:
             sustainData: Ordinal data object
@@ -462,20 +472,35 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
             B = sustainData.getNumBiomarkers()
 
             # Get data tensors (cached on GPU after first access)
-            prob_nl_tensor = sustainData.get_prob_nl_torch()    # (M, B)
-            prob_score_tensor = sustainData.get_prob_score_torch()  # (M, N_events)
+            prob_nl_tensor = sustainData.get_prob_nl_torch()        # (M, B)
+            prob_score_tensor = sustainData.get_prob_score_torch()   # (M, N_events)
 
-            # ---- Step 1: Precompute masks on CPU (pure index logic, fast) ----
+            # ---- Step 1: Precompute index matrix on CPU ----
             S_np = S_single.cpu().numpy().astype(int) if S_single.is_cuda else S_single.numpy().astype(int)
             stage_bio_idx = self.stage_biomarker_index_np
+
+            # We'll concatenate [log_prob_score (N cols) | log_prob_nl (B cols)]
+            # so prob_nl column `b` becomes column `N + b` in the combined tensor.
+            # For each stage, collect the combined-tensor column indices to sum.
+
+            # Stage 0: all B biomarkers are normal → columns N..N+B-1
+            # Stage j+1: abnormal score indices (0..N-1) + remaining normal (N+b)
 
             IS_normal = np.ones(B, dtype=bool)
             index_reached = np.zeros(B, dtype=int)
 
-            # For each stage j+1, store which prob_score event indices are abnormal
-            # and which prob_nl biomarker indices are normal
-            abnormal_event_indices = []  # list of N arrays of event indices
-            normal_bio_masks = []        # list of N boolean masks over B biomarkers
+            # Build list of index arrays — one per stage
+            # max possible columns per stage = N + B (won't happen, but safe upper bound)
+            max_cols = N + B
+            # Use a padded numpy matrix: (N+1, max_cols), filled with a "pad" index
+            # We'll use column 0 of a zeros-log tensor as the pad (contributes 0 to sum)
+            gather_indices = np.zeros((N + 1, max_cols), dtype=np.int64)
+            gather_counts = np.zeros(N + 1, dtype=np.int64)
+
+            # Stage 0: all normal
+            normal_indices_0 = N + np.arange(B)  # offset into combined tensor
+            gather_indices[0, :B] = normal_indices_0
+            gather_counts[0] = B
 
             for j in range(N):
                 event_idx = S_np[j]
@@ -483,45 +508,47 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
                 index_reached[bio] = event_idx
                 IS_normal[bio] = False
 
-                # Snapshot current state
-                abnormal_event_indices.append(index_reached[~IS_normal].copy())
-                normal_bio_masks.append(IS_normal.copy())
+                # Abnormal: score event indices (already 0..N-1 in combined tensor)
+                abn_idx = index_reached[~IS_normal]
+                # Normal: biomarker indices offset by N
+                nrm_idx = N + np.where(IS_normal)[0]
 
-            # ---- Step 2: Compute all log-probabilities on GPU in bulk ----
-            # Compute log of all prob columns once (one large GPU kernel)
-            log_prob_nl = torch.log(prob_nl_tensor + 1e-250)      # (M, B)
-            log_prob_score = torch.log(prob_score_tensor + 1e-250) # (M, N_events)
+                combined = np.concatenate([abn_idx, nrm_idx])
+                n_cols = len(combined)
+                gather_indices[j + 1, :n_cols] = combined
+                gather_counts[j + 1] = n_cols
+
+            # ---- Step 2: Single batched GPU computation ----
+
+            # Compute logs once
+            log_prob_score = torch.log(prob_score_tensor + 1e-250)  # (M, N_events)
+            log_prob_nl = torch.log(prob_nl_tensor + 1e-250)        # (M, B)
+
+            # Concatenate into one tensor: (M, N_events + B)
+            # Column i < N → log_prob_score[:, i]
+            # Column i >= N → log_prob_nl[:, i - N]
+            log_combined = torch.cat([log_prob_score, log_prob_nl], dim=1)  # (M, N+B)
+
+            # Transfer index matrix to GPU (one small transfer: (N+1) x max_cols int64)
+            gather_idx_t = torch.tensor(gather_indices, device=self.device, dtype=torch.long)
+            gather_counts_t = torch.tensor(gather_counts, device=self.device, dtype=torch.long)
+
+            # Gather all columns for all stages: (M, N+1, max_cols)
+            # log_combined[:, gather_idx_t] → (M, N+1, max_cols)
+            all_logs = log_combined[:, gather_idx_t]  # advanced indexing, single kernel
+
+            # Create a mask to zero out padded positions: (1, N+1, max_cols)
+            col_range = torch.arange(max_cols, device=self.device).unsqueeze(0)  # (1, max_cols)
+            counts_expanded = gather_counts_t.unsqueeze(1)  # (N+1, 1)
+            valid_mask = col_range < counts_expanded  # (N+1, max_cols)
+            valid_mask = valid_mask.unsqueeze(0)  # (1, N+1, max_cols) — broadcasts over M
+
+            # Zero out padded positions, sum across columns, exp
+            all_logs = all_logs * valid_mask  # padded positions become 0 (neutral for sum)
+            log_sums = torch.sum(all_logs, dim=2)  # (M, N+1)
 
             coeff = 1.0 / (N + 1)
-
-            # Stage 0: all biomarkers normal → product of all prob_nl columns
-            # = sum of all log_prob_nl columns
-            log_stage_0 = torch.sum(log_prob_nl, dim=1)  # (M,)
-
-            # Build result tensor
-            p_perm_k = torch.zeros((M, N + 1), device=self.device, dtype=self.dtype)
-            p_perm_k[:, 0] = coeff * torch.exp(log_stage_0)
-
-            # Stages 1..N: use precomputed masks to gather and sum logs
-            for j in range(N):
-                abn_idx = abnormal_event_indices[j]
-                nrm_mask = normal_bio_masks[j]
-
-                # Sum log-probs for abnormal events
-                if len(abn_idx) > 0:
-                    abn_idx_t = torch.tensor(abn_idx, device=self.device, dtype=torch.long)
-                    log_abn = torch.sum(log_prob_score[:, abn_idx_t], dim=1)  # (M,)
-                else:
-                    log_abn = torch.zeros(M, device=self.device, dtype=self.dtype)
-
-                # Sum log-probs for normal biomarkers
-                if nrm_mask.any():
-                    nrm_idx_t = torch.tensor(np.where(nrm_mask)[0], device=self.device, dtype=torch.long)
-                    log_nrm = torch.sum(log_prob_nl[:, nrm_idx_t], dim=1)  # (M,)
-                else:
-                    log_nrm = torch.zeros(M, device=self.device, dtype=self.dtype)
-
-                p_perm_k[:, j + 1] = coeff * torch.exp(log_abn + log_nrm)
+            p_perm_k = coeff * torch.exp(log_sums)  # (M, N+1)
 
             return p_perm_k
 
