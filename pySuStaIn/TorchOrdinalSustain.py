@@ -80,8 +80,12 @@ class TorchOrdinalSustain(OrdinalSustain):
                                str([attr for attr in dir(self) if 'sustain' in attr.lower()]))
 
         # Create PyTorch-enabled data object
+        # IMPORTANT: Use sustain_data's prob_nl and prob_score, NOT the raw inputs.
+        # The parent OrdinalSustain.__init__ reshapes prob_score from (M, B, num_scores)
+        # to (M, N) where N = total stages, so each column is one biomarker-score event.
         self.torch_sustain_data = create_torch_ordinal_data(
-            prob_nl, prob_score, sustain_data.getNumStages(), self.torch_backend
+            sustain_data.prob_nl, sustain_data.prob_score,
+            sustain_data.getNumStages(), self.torch_backend
         )
 
         # Create GPU-accelerated likelihood calculator

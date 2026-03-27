@@ -192,7 +192,8 @@ class TorchOrdinalSustainData(TorchAbstractSustainData):
         
         Args:
             prob_nl: Normal/negative class probabilities (M, B)
-            prob_score: Score probabilities (M, B, num_scores)
+            prob_score: Score probabilities - reshaped to (M, N) by OrdinalSustain init
+                        where N = total stages (biomarker-score events)
             numStages: Number of stages
             backend: PyTorch backend for GPU operations
         """

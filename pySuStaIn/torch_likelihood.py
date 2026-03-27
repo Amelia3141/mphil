@@ -445,7 +445,7 @@ class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
 
             # Get data tensors
             prob_nl_tensor = sustainData.get_prob_nl_torch()  # (M, B)
-            prob_score_tensor = sustainData.get_prob_score_torch()  # (M, N)
+            prob_score_tensor = sustainData.get_prob_score_torch()  # (M, N) - reshaped by OrdinalSustain init
 
             # Initialize state tracking tensors
             IS_normal = torch.ones(B, device=self.device, dtype=self.dtype)
