@@ -120,11 +120,11 @@ class AbstractSustain(ABC):
             except ImportError:
                 # Fallback to serial execution
                 self.pool = None
-                self.pool.ncpus = 1
+                self.ncpus = 1
                 print("Warning: ThreadPoolExecutor not available, using serial execution")
         else:
             self.pool = None
-            self.pool.ncpus = 1
+            self.ncpus = 1
 
     #********************* PUBLIC METHODS
     def run_sustain_algorithm(self, plot=False, plot_format="png", **kwargs):
