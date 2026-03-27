@@ -32,7 +32,10 @@ import multiprocessing
 from functools import partial, partialmethod
 
 import time
-import pathos
+try:
+    import pathos
+except ImportError:
+    pathos = None
 
 #*******************************************
 #The data structure class for AbstractSustain. It has no data itself - the implementations of AbstractSustain need to define their own implementations of this class.

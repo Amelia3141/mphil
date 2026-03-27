@@ -2,9 +2,28 @@
 # License: TBC
 
 from .AbstractSustain import *
-from .MixtureSustain import *
-from .ZscoreSustain import *
+
+# Optional imports - these may fail if dependencies aren't installed
+try:
+    from .MixtureSustain import *
+except ImportError:
+    pass
+
+try:
+    from .ZscoreSustain import *
+except ImportError:
+    pass
+
 from .OrdinalSustain import *
-from .ZScoreSustainMissingData import *
-from .TorchZScoreSustainMissingData import *
+
+try:
+    from .ZScoreSustainMissingData import *
+except ImportError:
+    pass
+
+try:
+    from .TorchZScoreSustainMissingData import *
+except ImportError:
+    pass
+
 from .TorchOrdinalSustain import *
