@@ -83,7 +83,7 @@ def generate_test_data(n_subjects=8000, n_biomarkers=13, n_scores=3, seed=42):
     score_vals = np.tile(np.arange(1, n_scores + 1), (n_biomarkers, 1))
     biomarker_labels = [f"Domain_{i+1}" for i in range(n_biomarkers)]
 
-    print(f"  ✅ Data shape: prob_nl={prob_nl.shape}, prob_score={prob_score.shape}")
+    print(f"   Data shape: prob_nl={prob_nl.shape}, prob_score={prob_score.shape}")
     return prob_nl, prob_score, score_vals, biomarker_labels
 
 
@@ -110,7 +110,7 @@ def load_user_data(data_config):
     else:
         biomarker_labels = [f"Biomarker_{i}" for i in range(prob_nl.shape[1])]
 
-    print(f"  ✅ Loaded: {prob_nl.shape[0]} subjects, {prob_nl.shape[1]} biomarkers")
+    print(f"   Loaded: {prob_nl.shape[0]} subjects, {prob_nl.shape[1]} biomarkers")
     return prob_nl, prob_score, score_vals, biomarker_labels
 
 
@@ -122,7 +122,7 @@ def run_quick_test(device_id=0):
         device_id: GPU device ID to use
     """
     print("="*70)
-    print("🧪 QUICK TEST - GPU Validation")
+    print(" QUICK TEST - GPU Validation")
     print("="*70)
 
     # Generate small test dataset
@@ -147,13 +147,13 @@ def run_quick_test(device_id=0):
 
     # Check GPU status
     if test_sustain.use_gpu:
-        print(f"✅ GPU initialized: {test_sustain.torch_backend.device_manager.device}")
+        print(f" GPU initialized: {test_sustain.torch_backend.device_manager.device}")
     else:
-        print("❌ GPU not available - running on CPU")
+        print(" GPU not available - running on CPU")
         return False
 
     # Run test
-    print("\n🚀 Running test...")
+    print("\n Running test...")
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     start_time = time.time()
@@ -161,7 +161,7 @@ def run_quick_test(device_id=0):
     test_time = time.time() - start_time
 
     print(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"✅ Test completed in {test_time:.1f} seconds")
+    print(f" Test completed in {test_time:.1f} seconds")
 
     # Estimate full run time
     full_iterations = 100000
@@ -171,16 +171,16 @@ def run_quick_test(device_id=0):
     estimated_days = estimated_hours / 24
 
     print("\n" + "="*70)
-    print("📊 PROJECTIONS FOR FULL RUN")
+    print(" PROJECTIONS FOR FULL RUN")
     print("="*70)
     print(f"Parameters: 100k MCMC iterations, 25 startpoints, 3 subtypes")
     print(f"\nEstimated runtime:")
-    print(f"  • {estimated_hours:.1f} hours = {estimated_days:.1f} days")
+    print(f"   {estimated_hours:.1f} hours = {estimated_days:.1f} days")
 
     if estimated_days < 30:
         speedup = 30 / estimated_days
-        print(f"\n⚡ GPU Speedup: {speedup:.1f}x faster than CPU (30 days)")
-        print(f"  • Time saved: {30 - estimated_days:.1f} days")
+        print(f"\n GPU Speedup: {speedup:.1f}x faster than CPU (30 days)")
+        print(f"   Time saved: {30 - estimated_days:.1f} days")
 
     print("="*70)
     return True
@@ -353,13 +353,13 @@ Examples:
     try:
         results = run_full_analysis(config)
         if results:
-            print("\n🎉 Analysis completed successfully!")
+            print("\n Analysis completed successfully!")
             sys.exit(0)
         else:
-            print("\n❌ Analysis failed!")
+            print("\n Analysis failed!")
             sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\n Error: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

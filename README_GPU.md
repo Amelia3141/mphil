@@ -2,7 +2,7 @@
 
 Complete setup for running OrdinalSustain with GPU acceleration - up to **25x faster** than CPU!
 
-## 📦 What's Included
+##  What's Included
 
 ### **1. Standalone Python Script**
 `run_ordinal_gpu.py` - Complete command-line tool with logging
@@ -22,7 +22,7 @@ Complete setup for running OrdinalSustain with GPU acceleration - up to **25x fa
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Option 1: Command-Line Script (Recommended for Servers)
 
@@ -43,12 +43,12 @@ python run_ordinal_gpu.py --config config.json --device 1
 ### Option 2: Jupyter Notebook (Recommended for Colab)
 
 1. Open in Colab: [Click here](https://colab.research.google.com/github/Amelia3141/mphil/blob/claude%2Fconvert-to-jupyter-01GY8iZvAixjYs4t3VyLsWHf/notebooks/GPU_OrdinalSustain_Colab.ipynb)
-2. Enable GPU: Runtime → Change runtime type → T4 GPU
+2. Enable GPU: Runtime  Change runtime type  T4 GPU
 3. Run cells in order
 
 ---
 
-## 📋 Configuration File
+##  Configuration File
 
 Copy `config_example.json` and customize for your needs:
 
@@ -86,7 +86,7 @@ Copy `config_example.json` and customize for your needs:
 
 ---
 
-## 🖥️ System Requirements
+##  System Requirements
 
 ### Minimum:
 - Python 3.8+
@@ -105,7 +105,7 @@ pip install torch numpy scipy matplotlib pandas scikit-learn tqdm
 
 ---
 
-## 📊 Performance Benchmarks
+##  Performance Benchmarks
 
 | Configuration | CPU Time | GPU (T4) | GPU (A100) | Speedup |
 |--------------|----------|----------|------------|---------|
@@ -115,7 +115,7 @@ pip install torch numpy scipy matplotlib pandas scikit-learn tqdm
 
 ---
 
-## 📖 Detailed Usage
+##  Detailed Usage
 
 ### **Quick Test (2-5 minutes)**
 
@@ -127,8 +127,8 @@ python run_ordinal_gpu.py --quick-test
 
 Output:
 ```
-✅ GPU initialized: cuda:0
-⚡ GPU Speedup: 25.3x faster than CPU (30 days)
+ GPU initialized: cuda:0
+ GPU Speedup: 25.3x faster than CPU (30 days)
 ```
 
 ### **Full Analysis with Your Data**
@@ -178,7 +178,7 @@ For hyperparameter search on GBSH servers:
 
 ---
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### GPU Not Detected
 
@@ -193,7 +193,7 @@ nvidia-smi
 ### Out of Memory
 
 Reduce batch size by:
-- Decreasing `N_startpoints` (e.g., 25 → 10)
+- Decreasing `N_startpoints` (e.g., 25  10)
 - Reducing subject count in data
 - Using smaller GPU-friendly data types
 
@@ -205,27 +205,27 @@ Reduce batch size by:
 
 ---
 
-## 📁 Output Files
+##  Output Files
 
 After analysis completes:
 
 ```
 sustain_output/
-├── pickle_files/
-│   ├── dataset_subtype0.pickle  # N=1 model
-│   ├── dataset_subtype1.pickle  # N=2 model
-│   └── dataset_subtype2.pickle  # N=3 model
-├── figures/
-│   ├── positional_variance_diagrams_subtype*.png
-│   └── MCMC_likelihoods.png
-└── results/
-    ├── Subject_subtype_stage_estimates.csv
-    └── model_parameters.json
+ pickle_files/
+    dataset_subtype0.pickle  # N=1 model
+    dataset_subtype1.pickle  # N=2 model
+    dataset_subtype2.pickle  # N=3 model
+ figures/
+    positional_variance_diagrams_subtype*.png
+    MCMC_likelihoods.png
+ results/
+     Subject_subtype_stage_estimates.csv
+     model_parameters.json
 ```
 
 ---
 
-## 🔧 Advanced Usage
+##  Advanced Usage
 
 ### Custom Logging
 
@@ -262,7 +262,7 @@ results = sustain.run_sustain_algorithm()
 
 ---
 
-## 📚 References
+##  References
 
 - [pySuStaIn Paper](https://doi.org/10.1016/j.softx.2021.100811)
 - [Original SuStaIn Algorithm](https://doi.org/10.1038/s41467-018-05892-0)
@@ -270,7 +270,7 @@ results = sustain.run_sustain_algorithm()
 
 ---
 
-## 🤝 Support
+##  Support
 
 - Issues: [GitHub Issues](https://github.com/Amelia3141/mphil/issues)
 - Documentation: See notebooks and inline code comments
@@ -278,7 +278,7 @@ results = sustain.run_sustain_algorithm()
 
 ---
 
-## ✅ What's Fixed in This Version
+##  What's Fixed in This Version
 
 1. **Shape mismatch bug** - GPU now properly handles subject subsets
 2. **Unnecessary dependencies** - Removed pathos/dill (not needed for GPU)
@@ -287,4 +287,4 @@ results = sustain.run_sustain_algorithm()
 5. **Configuration** - JSON config files with validation
 6. **CLI** - Full command-line interface with arguments
 
-**Your analysis that took 30 days on CPU now takes 1.2 days on GPU!** 🚀
+**Your analysis that took 30 days on CPU now takes 1.2 days on GPU!** 

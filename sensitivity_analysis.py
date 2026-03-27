@@ -586,7 +586,7 @@ class SensitivityAnalyzer:
                 f.write("### Key Findings:\n\n")
                 f.write(f"- Runtime increases linearly with subtypes\n")
                 f.write(f"- Mean runtime per subtype: {df1['runtime'].mean():.1f}s\n")
-                f.write(f"- Stage correlation remains high: {df1['stage_correlation'].mean():.3f} ± {df1['stage_correlation'].std():.3f}\n")
+                f.write(f"- Stage correlation remains high: {df1['stage_correlation'].mean():.3f}  {df1['stage_correlation'].std():.3f}\n")
                 f.write(f"- All experiments successful: {df1['success'].all()}\n\n")
                 f.write("### Results Table:\n\n")
                 f.write(df1[['n_subtypes_fit', 'runtime', 'stage_correlation', 'mean_confidence']].to_markdown(index=False))
@@ -666,7 +666,7 @@ class SensitivityAnalyzer:
             f.write("### Strengths:\n\n")
             f.write("1. **Scalability**: Handles 1-6 subtypes reliably\n")
             f.write("2. **Missing Data**: Robust up to 30% missing data\n")
-            f.write("3. **Sample Size**: Works well with n ≥ 500 subjects\n")
+            f.write("3. **Sample Size**: Works well with n  500 subjects\n")
             f.write("4. **Noise Tolerance**: Acceptable performance up to 15% noise\n")
             f.write("5. **GPU Acceleration**: 25x speedup enables comprehensive validation\n\n")
 
