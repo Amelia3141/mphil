@@ -222,14 +222,19 @@ class SensitivityAnalyzer:
 
             runtime = time.time() - start_time
 
+            # Ensure arrays are 1D (subtype_and_stage_individuals returns (n_samples, 1) shapes)
+            ml_subtype = np.squeeze(ml_subtype)
+            ml_stage = np.squeeze(ml_stage)
+            prob_ml_subtype = np.squeeze(prob_ml_subtype)
+            prob_ml_stage = np.squeeze(prob_ml_stage)
+
             # Calculate accuracy metrics
             subtype_accuracy = np.mean(ml_subtype == true_subtypes) if n_subtypes_fit == n_subtypes_true else np.nan
             stage_mae = np.mean(np.abs(ml_stage - true_stages))
             stage_correlation = np.corrcoef(ml_stage, true_stages)[0, 1]
 
-            # Calculate subtype confidence
-            max_subtype_prob = np.max(prob_ml_subtype, axis=1)
-            mean_confidence = np.mean(max_subtype_prob)
+            # Calculate subtype confidence (prob_ml_subtype already contains max probabilities)
+            mean_confidence = np.mean(prob_ml_subtype)
 
             success = True
             error_msg = None
