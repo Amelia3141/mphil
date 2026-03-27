@@ -1,0 +1,52 @@
+{
+  "description": "Example configuration for GPU-accelerated OrdinalSustain analysis",
+  "version": "1.0",
+
+  "data": {
+    "use_test_data": false,
+    "prob_nl_path": "/path/to/your/prob_nl.npy",
+    "prob_score_path": "/path/to/your/prob_score.npy",
+    "score_vals_path": "/path/to/your/score_vals.npy",
+    "biomarker_labels_path": "/path/to/your/biomarker_labels.json"
+  },
+
+  "test_data": {
+    "n_subjects": 8000,
+    "n_biomarkers": 13,
+    "n_scores": 3,
+    "seed": 42
+  },
+
+  "sustain_parameters": {
+    "N_startpoints": 25,
+    "N_S_max": 3,
+    "N_iterations_MCMC": 100000,
+    "use_parallel_startpoints": false,
+    "seed": 42
+  },
+
+  "gpu_settings": {
+    "use_gpu": true,
+    "device_id": 0
+  },
+
+  "output": {
+    "output_folder": "./sustain_output",
+    "dataset_name": "EDS_POTS_MCAS_DICE",
+    "save_pickle": true,
+    "save_csv": true,
+    "save_plots": true
+  },
+
+  "logging": {
+    "level": "INFO",
+    "log_file": "./sustain_analysis.log",
+    "console_output": true
+  },
+
+  "cross_validation": {
+    "enabled": false,
+    "n_folds": 10,
+    "stratified": true
+  }
+}
