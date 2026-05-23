@@ -1,207 +1,131 @@
 #!/usr/bin/env python3
 """
-Example script demonstrating parallel MCMC execution for SuStaIn algorithms.
+Demonstrate process-parallel MCMC chains for OrdinalSustain.
 
-This script shows how to use the parallel MCMC implementation to significantly
-reduce computation time for SuStaIn algorithms.
+Runs the same model in N_S=1 mode with `n_chains` independent MCMC chains,
+each in its own worker process. Reports wall time, summed chain time, and
+the resulting speedup. Each chain has its own deterministic seed, so
+results are reproducible.
+
+Requires `OrdinalSustain` to be importable. The module-path requirement of
+`multiprocessing` is satisfied: the class lives in `pySuStaIn.OrdinalSustain`.
+
+Example:
+    python example_parallel_mcmc.py
 """
 
-import numpy as np
+from __future__ import annotations
+
 import time
-import sys
-import os
+from typing import Tuple
 
-# Add the pySuStaIn directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'pySuStaIn'))
+import numpy as np
 
-def create_sample_data(n_subjects=200, n_biomarkers=6):
-    """Create sample data for testing."""
-    # Generate synthetic z-score data
-    data = np.random.randn(n_subjects, n_biomarkers)
-    
-    # Create Z_vals matrix (3 thresholds per biomarker)
-    Z_vals = np.tile(np.array([1, 2, 3]), (n_biomarkers, 1))
-    
-    # Create Z_max vector
-    Z_max = np.full(n_biomarkers, 5.0)
-    
-    # Create biomarker labels
-    biomarker_labels = [f'biomarker_{i+1}' for i in range(n_biomarkers)]
-    
-    return data, Z_vals, Z_max, biomarker_labels
+from pySuStaIn.OrdinalSustain import OrdinalSustain
+from pySuStaIn.parallel_mcmc import combine_chain_samples, run_parallel_chains
 
 
-def benchmark_serial_vs_parallel():
-    """Benchmark serial vs parallel MCMC execution."""
-    print("=== SuStaIn Parallel MCMC Benchmark ===\n")
-    
-    # Create sample data
-    print("Creating sample data...")
-    data, Z_vals, Z_max, biomarker_labels = create_sample_data(n_subjects=150, n_biomarkers=5)
-    print(f"Data shape: {data.shape}")
-    
-    try:
-        from pySuStaIn.parallel_torch_sustain import create_parallel_torch_zscore_sustain_missing_data
-        
-        # Test parameters
-        n_iterations = 2000  # Reduced for demo
-        n_chains_list = [1, 2, 4]  # Test different numbers of chains
-        
-        print(f"\nTesting with {n_iterations} MCMC iterations per chain...")
-        
-        results = {}
-        
-        for n_chains in n_chains_list:
-            print(f"\n--- Testing {n_chains} chain(s) ---")
-            
-            # Create parallel SuStaIn instance
-            sustain = create_parallel_torch_zscore_sustain_missing_data(
-                data=data,
-                Z_vals=Z_vals,
-                Z_max=Z_max,
-                biomarker_labels=biomarker_labels,
-                N_startpoints=5,  # Reduced for demo
-                N_S_max=2,
-                N_iterations_MCMC=n_iterations,
-                output_folder="./temp_output",
-                dataset_name=f"parallel_test_{n_chains}chains",
-                use_parallel_startpoints=True,
-                seed=42,
-                use_gpu=False,  # Use CPU for compatibility
-                use_parallel_mcmc=(n_chains > 1),
-                n_mcmc_chains=n_chains,
-                mcmc_backend='process'
-            )
-            
-            # Run benchmark
-            start_time = time.time()
-            
-            # Run just the MCMC part (not the full algorithm)
-            from pySuStaIn.ZScoreSustainMissingData import ZScoreSustainData
-            sustain_data = ZScoreSustainData(data, sustain._ZscoreSustainMissingData__sustainData.getNumStages())
-            
-            # Create test sequences
-            N = sustain_data.getNumStages()
-            seq_init = np.random.permutation(N).reshape(1, N)
-            f_init = np.array([1.0])
-            
-            # Run MCMC
-            if n_chains == 1:
-                # Serial execution
-                ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
-                    sustain._original_estimate_uncertainty_sustain_model(sustain_data, seq_init, f_init)
-            else:
-                # Parallel execution
-                ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
-                    sustain._estimate_uncertainty_sustain_model(sustain_data, seq_init, f_init)
-            
-            total_time = time.time() - start_time
-            
-            results[n_chains] = {
-                'time': total_time,
-                'samples_shape': samples_sequence.shape,
-                'likelihood_shape': samples_likelihood.shape
-            }
-            
-            print(f"  Time: {total_time:.2f} seconds")
-            print(f"  Samples shape: {samples_sequence.shape}")
-            print(f"  Likelihood shape: {samples_likelihood.shape}")
-        
-        # Calculate speedup
-        print(f"\n=== Performance Summary ===")
-        serial_time = results[1]['time']
-        
-        for n_chains in n_chains_list:
-            time_taken = results[n_chains]['time']
-            speedup = serial_time / time_taken
-            efficiency = speedup / n_chains
-            
-            print(f"{n_chains} chains: {time_taken:.2f}s, speedup: {speedup:.2f}x, efficiency: {efficiency:.2f}")
-        
-        return results
-        
-    except ImportError as e:
-        print(f"Import error: {e}")
-        print("Make sure all dependencies are installed:")
-        print("  pip install pathos concurrent.futures")
-        return None
-    except Exception as e:
-        print(f"Error during benchmark: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+def make_synthetic_ordinal_data(
+    n_subjects: int = 200,
+    n_biomarkers: int = 4,
+    n_scores: int = 3,
+    seed: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, list]:
+    """Construct probability matrices for OrdinalSustain on synthetic data.
+
+    Returns the matrices that OrdinalSustain.__init__ consumes directly
+    (no internal estimation needed).
+    """
+    rng = np.random.default_rng(seed)
+    score_vals = np.tile(np.arange(1, n_scores + 1), (n_biomarkers, 1))
+
+    # Soft normal/score probabilities — realistic enough to drive MCMC
+    prob_nl = rng.dirichlet(np.ones(2), size=(n_subjects, n_biomarkers))[..., 0]
+    prob_nl = np.clip(prob_nl, 1e-3, 1 - 1e-3)
+
+    prob_score = rng.dirichlet(np.ones(n_scores), size=(n_subjects, n_biomarkers))
+    prob_score = np.clip(prob_score, 1e-3, 1 - 1e-3)
+
+    biomarker_labels = [f"bm_{i}" for i in range(n_biomarkers)]
+    return prob_nl, prob_score, score_vals, biomarker_labels
 
 
-def demo_parallel_features():
-    """Demonstrate parallel MCMC features."""
-    print("\n=== Parallel MCMC Features Demo ===\n")
-    
-    try:
-        from pySuStaIn.parallel_torch_sustain import create_parallel_torch_zscore_sustain_missing_data
-        
-        # Create sample data
-        data, Z_vals, Z_max, biomarker_labels = create_sample_data(n_subjects=100, n_biomarkers=4)
-        
-        # Create parallel SuStaIn instance
-        sustain = create_parallel_torch_zscore_sustain_missing_data(
-            data=data,
-            Z_vals=Z_vals,
-            Z_max=Z_max,
-            biomarker_labels=biomarker_labels,
-            N_startpoints=3,
-            N_S_max=2,
-            N_iterations_MCMC=500,
-            use_parallel_mcmc=True,
-            n_mcmc_chains=4,
-            mcmc_backend='process',
-            use_gpu=False
+def build_sustain_kwargs(
+    prob_nl,
+    prob_score,
+    score_vals,
+    biomarker_labels,
+    *,
+    n_iterations_mcmc: int,
+    output_folder: str = "./tmp_parallel_demo",
+    seed: int = 42,
+):
+    return dict(
+        prob_nl=prob_nl,
+        prob_score=prob_score,
+        score_vals=score_vals,
+        biomarker_labels=biomarker_labels,
+        N_startpoints=5,
+        N_S_max=1,
+        N_iterations_MCMC=n_iterations_mcmc,
+        output_folder=output_folder,
+        dataset_name="parallel_demo",
+        use_parallel_startpoints=False,
+        seed=seed,
+    )
+
+
+def run_initial_em_and_get_init(sustain: OrdinalSustain):
+    """Run the single-subtype EM to get a sensible `seq_init`, `f_init`."""
+    rng = np.random.default_rng(sustain.seed)
+    sustain_data = sustain._AbstractSustain__sustainData
+    seq_init = sustain._initialise_sequence(sustain_data, rng)
+    f_init = np.array([1.0])
+    ml_seq, ml_f, _ = sustain._optimise_parameters(sustain_data, seq_init, f_init, rng)
+    return ml_seq, ml_f
+
+
+def demo(n_iterations: int = 2000, chain_counts=(1, 2, 4)):
+    prob_nl, prob_score, score_vals, biomarker_labels = make_synthetic_ordinal_data()
+    init_kwargs = build_sustain_kwargs(
+        prob_nl, prob_score, score_vals, biomarker_labels,
+        n_iterations_mcmc=n_iterations,
+    )
+
+    # Build one parent instance just to derive seq_init / f_init from EM.
+    parent = OrdinalSustain(**init_kwargs)
+    seq_init, f_init = run_initial_em_and_get_init(parent)
+
+    # Reasonable MCMC proposal scales (would normally come from
+    # `_optimise_mcmc_settings`; using defaults keeps the demo fast).
+    seq_sigma = 1.0
+    f_sigma = 0.01
+
+    print(f"{'n_chains':>10} {'wall(s)':>10} {'sum(s)':>10} {'speedup':>10}")
+    print("-" * 44)
+    for n_chains in chain_counts:
+        t0 = time.perf_counter()
+        result = run_parallel_chains(
+            sustain_class=OrdinalSustain,
+            init_kwargs=init_kwargs,
+            seq_init=seq_init,
+            f_init=f_init,
+            n_iterations=n_iterations,
+            seq_sigma=seq_sigma,
+            f_sigma=f_sigma,
+            n_chains=n_chains,
         )
-        
-        print("Parallel SuStaIn instance created successfully!")
-        
-        # Get parallel stats
-        stats = sustain.get_parallel_stats()
-        print(f"Parallel stats: {stats}")
-        
-        # Demonstrate backend switching
-        print("\nSwitching to thread backend...")
-        sustain.switch_parallel_backend('thread', n_workers=2)
-        
-        # Demonstrate disabling parallel MCMC
-        print("\nDisabling parallel MCMC...")
-        sustain.disable_parallel_mcmc()
-        
-        print("Demo completed successfully!")
-        
-    except Exception as e:
-        print(f"Error in demo: {e}")
-        import traceback
-        traceback.print_exc()
+        wall = time.perf_counter() - t0
+        sum_t = sum(result["chain_times"])
+        print(
+            f"{n_chains:>10d} {wall:>10.2f} {sum_t:>10.2f} {result['speedup']:>10.2f}"
+        )
 
-
-def main():
-    """Main function to run examples."""
-    print("SuStaIn Parallel MCMC Examples")
-    print("=" * 40)
-    
-    # Run benchmark
-    benchmark_results = benchmark_serial_vs_parallel()
-    
-    if benchmark_results:
-        # Run feature demo
-        demo_parallel_features()
-        
-        print("\n=== Summary ===")
-        print("Parallel MCMC implementation provides:")
-        print("1. Multiple MCMC chains running in parallel")
-        print("2. Process-based and thread-based parallelism")
-        print("3. GPU acceleration support")
-        print("4. Automatic result combination")
-        print("5. Performance benchmarking")
-        print("\nExpected speedup: 2-4x for 4 chains (depending on system)")
-    else:
-        print("Benchmark failed - check dependencies and try again")
+        pooled = combine_chain_samples(result)
+        # Smoke test: shapes line up
+        assert pooled["samples_sequence"].shape[2] == n_chains * n_iterations
+        assert pooled["samples_f"].shape[1] == n_chains * n_iterations
 
 
 if __name__ == "__main__":
-    main()
+    demo()

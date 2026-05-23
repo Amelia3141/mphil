@@ -1,165 +1,77 @@
-# Parallel MCMC Implementation for fastSuStaIn
+# Parallel MCMC chains for SuStaIn
 
-## 🚀 Overview
+This implementation runs independent MCMC chains in separate OS processes
+via `multiprocessing`. It exists in two flavours:
 
-This implementation provides parallel execution of MCMC chains for the fastSuStaIn library, significantly reducing computation time while maintaining statistical validity. The solution avoids the dill compatibility issues with Python 3.11 by using thread-based parallelism instead of process-based parallelism.
+1. **Standalone** — `pySuStaIn.parallel_mcmc.run_parallel_chains`. Works
+   with any `AbstractSustain` subclass; the user passes the class and
+   constructor kwargs, the function builds one instance per worker.
+2. **Wrapper** — `ParallelTorchZScoreSustainMissingData`. Drops in for
+   `TorchZScoreSustainMissingData`; the multi-chain MCMC kicks in
+   inside `_estimate_uncertainty_sustain_model`.
 
-## ✅ Problem Solved
+## Why process-based rather than thread-based
 
-**Original Issue**: `AttributeError: 'code' object has no attribute 'co_endlinetable'`
+SuStaIn's likelihood evaluation is pure NumPy/Python with no GIL
+release. Threads share the GIL, so `n_threads` threads of NumPy code
+run roughly as fast as 1 — see the `concurrent.futures` docs on the
+GIL. The previous thread-based implementation in this repository
+silently delivered no parallelism while reporting a "speedup" derived
+from a load-imbalance ratio rather than an actual time comparison.
 
-**Root Cause**: Python 3.11 compatibility issue with the `dill` library used by `pathos.multiprocessing`
+The current implementation uses `multiprocessing.ProcessPoolExecutor`
+with the `spawn` start method (so it works on macOS and Windows and
+does not inherit unwanted parent state like CUDA contexts).
 
-**Solution**: Replaced `pathos.multiprocessing` with `concurrent.futures` and implemented thread-based parallelism as a fallback for process-based parallelism.
+## Caveats
 
-## 📁 Files Created/Modified
+- Each worker constructs a fresh SuStaIn instance, including
+  re-running the `__init__` preprocessing. For typical input sizes
+  this is negligible compared with MCMC.
+- When `use_gpu=True`, each worker process allocates its own GPU
+  context and its own copy of the data tensors. Running `n_chains > 2`
+  on a single GPU may exhaust memory. For chain-level parallelism on
+  one GPU the better pattern is to vectorise the chains as a leading
+  tensor axis — see `ACCELERATION_METHOD_REVIEW.md` §4.2.
+- The proposal scales (`seq_sigma`, `f_sigma`) are tuned once in the
+  parent process and passed to all chains so they explore at the same
+  scale. Each chain still draws independent proposals.
+- Chains are pooled by concatenation along the iteration axis. They
+  remain independent chains for diagnostic purposes (Rhat, ESS) — only
+  the final ML point estimate is shared.
 
-### New Files:
-1. **`pySuStaIn/parallel_mcmc.py`** - Core parallel MCMC implementation
-2. **`pySuStaIn/parallel_torch_sustain.py`** - Enhanced TorchZScoreSustainMissingData with parallelization
-3. **`example_parallel_mcmc_fixed.py`** - Comprehensive example demonstrating usage
-
-### Modified Files:
-- **`pySuStaIn/parallel_mcmc.py`** - Updated to use `concurrent.futures` instead of `pathos.multiprocessing`
-
-## 🔧 Key Features
-
-### 1. **Multiple Parallelization Backends**
-- **Thread-based**: Lightweight parallelism (default, avoids dill issues)
-- **Process-based**: True parallelism (fallback to thread-based for compatibility)
-- **GPU-based**: Future support for GPU parallelism
-
-### 2. **Flexible Chain Management**
-- Run 1, 2, 4, 8, or more MCMC chains in parallel
-- Automatic result combination across chains
-- Independent random seeds for each chain
-
-### 3. **Performance Monitoring**
-- Built-in benchmarking tools
-- Speedup and efficiency calculations
-- Chain execution time tracking
-
-## 💡 Usage Examples
-
-### Basic Usage with Existing `use_parallel_startpoints` Argument:
+## Example
 
 ```python
-from pySuStaIn.parallel_torch_sustain import create_parallel_torch_zscore_sustain_missing_data
+from pySuStaIn.OrdinalSustain import OrdinalSustain
+from pySuStaIn.parallel_mcmc import run_parallel_chains, combine_chain_samples
 
-# Create parallel SuStaIn instance
-sustain = create_parallel_torch_zscore_sustain_missing_data(
-    data=data,
-    Z_vals=Z_vals,
-    Z_max=Z_max,
-    biomarker_labels=biomarker_labels,
-    use_parallel_startpoints=True,  # Use existing argument
-    use_parallel_mcmc=True,         # Enable parallel MCMC
-    n_mcmc_chains=4,               # Number of parallel chains
-    mcmc_backend='thread'          # Use thread backend (avoids dill issues)
+init_kwargs = dict(
+    prob_nl=prob_nl, prob_score=prob_score, score_vals=score_vals,
+    biomarker_labels=labels,
+    N_startpoints=10, N_S_max=2, N_iterations_MCMC=10_000,
+    output_folder="./out", dataset_name="test",
+    use_parallel_startpoints=False, seed=42,
 )
 
-# Run algorithm (automatically uses parallel MCMC)
-sustain.run_sustain_algorithm()
-```
-
-### Integration with Existing Code:
-
-```python
-from pySuStaIn.parallel_mcmc import integrate_parallel_mcmc_with_sustain
-
-# Integrate parallel MCMC with existing SuStaIn instance
-integrate_parallel_mcmc_with_sustain(
-    sustain_instance,
-    use_parallel_mcmc=True,
-    n_mcmc_chains=4,
-    mcmc_backend='thread'
+# seq_init / f_init typically come from EM
+result = run_parallel_chains(
+    sustain_class=OrdinalSustain,
+    init_kwargs=init_kwargs,
+    seq_init=seq_init, f_init=f_init,
+    n_iterations=10_000,
+    seq_sigma=1.0, f_sigma=0.01,
+    n_chains=4,
 )
+print(f"wall {result['wall_time']:.1f}s, speedup {result['speedup']:.2f}x")
+
+pooled = combine_chain_samples(result)
 ```
 
-### Performance Benchmarking:
+## What was removed
 
-```python
-# Benchmark different chain counts
-results = sustain.benchmark_parallel_performance(n_iterations=1000)
-# Results: {1: 10s, 2: 6s, 4: 3s, 8: 2s}
-```
-
-## 📊 Expected Performance Gains
-
-| Chains | Expected Speedup | Efficiency | Use Case |
-|--------|------------------|------------|----------|
-| 1      | 1.0x            | 100%       | Baseline |
-| 2      | 1.8x            | 90%        | Good for 2-core systems |
-| 4      | 3.2x            | 80%        | **Recommended** for 4+ cores |
-| 8      | 5.6x            | 70%        | High-core systems |
-
-## 🔧 Technical Implementation
-
-### 1. **Thread-Based Parallelism**
-- Uses `ThreadPoolExecutor` for lightweight parallelism
-- Avoids dill serialization issues
-- Good for I/O-bound tasks and moderate CPU tasks
-
-### 2. **Result Combination**
-- Automatically merges samples from all chains
-- Maintains statistical validity
-- Finds best result across all chains
-
-### 3. **Memory Management**
-- Efficient handling of large sample arrays
-- Proper cleanup of parallel resources
-
-## 🚀 Getting Started
-
-### 1. **Run the Example**:
-```bash
-cd /Users/edlowther/projects/fastSuStaIn
-python example_parallel_mcmc_fixed.py
-```
-
-### 2. **Use in Your Code**:
-```python
-from pySuStaIn.parallel_torch_sustain import create_parallel_torch_zscore_sustain_missing_data
-
-sustain = create_parallel_torch_zscore_sustain_missing_data(
-    # ... your parameters ...
-    use_parallel_startpoints=True,  # Use existing argument
-    use_parallel_mcmc=True,
-    n_mcmc_chains=4,
-    mcmc_backend='thread'
-)
-```
-
-## 🎯 Integration Points
-
-The parallelization integrates at the **MCMC uncertainty estimation** level:
-
-1. **Original**: `_estimate_uncertainty_sustain_model()` runs 1 chain
-2. **Parallel**: Runs N chains simultaneously, combines results
-
-## 💪 Benefits
-
-- **2-4x speedup** for typical 4-chain setups
-- **Maintains statistical validity** (independent chains)
-- **Easy integration** with existing code
-- **Flexible configuration** (chains, workers, backends)
-- **Avoids dill compatibility issues** with Python 3.11
-- **GPU acceleration** support for future
-
-## 🔍 Testing
-
-The implementation has been tested with:
-- ✅ Basic parallel MCMC functionality
-- ✅ Integration with existing SuStaIn code
-- ✅ Performance benchmarking
-- ✅ Thread-based parallelism (avoids dill issues)
-- ✅ Result combination and statistics
-
-## 📝 Notes
-
-- **Thread-based parallelism** is used by default to avoid dill compatibility issues
-- **Process-based parallelism** falls back to thread-based for compatibility
-- **GPU parallelism** is planned for future implementation
-- **Statistical validity** is maintained through independent random seeds per chain
-
-The parallelization is particularly effective because MCMC chains are **embarrassingly parallel** - each chain can run independently without communication, making this an ideal candidate for parallelization!
+The previous version of this README claimed a 2-4x speedup from
+`ThreadPoolExecutor`. That number was not achievable with the previous
+implementation (GIL contention) and the benchmark code reporting it
+returned mock data. The replacement is honest about the constraints.
+See `ACCELERATION_METHOD_REVIEW.md` for the full discussion.

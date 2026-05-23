@@ -276,22 +276,28 @@ def efficient_tensor_tiling(tensor: torch.Tensor, reps: Tuple[int, ...]) -> torc
 
 
 def safe_torch_operations(tensor: torch.Tensor, operation: str, **kwargs) -> torch.Tensor:
-    """Perform safe tensor operations with error handling."""
-    try:
-        if operation == 'log':
-            return torch.log(tensor + 1e-250)  # Add small epsilon for numerical stability
-        elif operation == 'exp':
-            return torch.exp(tensor)
-        elif operation == 'sum':
-            dim = kwargs.get('dim', None)
-            return torch.sum(tensor, dim=dim)
-        elif operation == 'square':
-            return torch.square(tensor)
-        else:
-            raise ValueError(f"Unknown operation: {operation}")
-    except RuntimeError as e:
-        if "out of memory" in str(e):
-            warnings.warn(f"GPU out of memory during {operation}. Consider reducing batch size.")
-            raise
-        else:
-            raise
+    """Numerically-guarded tensor operations.
+
+    The previous implementation added a fixed `1e-250` before the log. That
+    value is below float32's smallest representable positive normal
+    (`torch.finfo(torch.float32).tiny` ≈ 1.18e-38), so on GPU (default
+    float32) the addition rounded to zero and the guard was silently a
+    no-op. Subjects whose `total_prob_subj` underflowed produced
+    `log(0) = -inf`, which then propagated through the Metropolis-Hastings
+    ratio and either always-rejected or always-accepted proposals
+    regardless of merit.
+
+    Fix: clamp to `torch.finfo(dtype).tiny` so the floor matches the active
+    dtype. In float64 this is ~2.2e-308, in float32 ~1.18e-38.
+    """
+    if operation == 'log':
+        eps = torch.finfo(tensor.dtype).tiny
+        return torch.log(torch.clamp(tensor, min=eps))
+    elif operation == 'exp':
+        return torch.exp(tensor)
+    elif operation == 'sum':
+        return torch.sum(tensor, dim=kwargs.get('dim', None))
+    elif operation == 'square':
+        return torch.square(tensor)
+    else:
+        raise ValueError(f"Unknown operation: {operation}")

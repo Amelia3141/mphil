@@ -1,395 +1,265 @@
-###
-# Parallel MCMC Implementation for fastSuStaIn
-# 
-# This module provides parallel execution of MCMC chains to significantly
-# reduce computation time for SuStaIn algorithms.
-#
-# Authors: GPU Migration Team
-###
+"""
+Process-based parallel MCMC for SuStaIn.
 
-import multiprocessing as mp
-import numpy as np
-import time
-from typing import List, Tuple, Optional, Union
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from functools import partial
-import warnings
+Runs independent MCMC chains in separate OS processes via the standard
+library `multiprocessing` module. Each chain constructs its own SuStaIn
+instance inside its worker process, which avoids having to pickle a
+parent instance (which may carry unpicklable state such as a
+`ThreadPoolExecutor`) and ensures full isolation of NumPy's global RNG.
 
+This module replaces the previous thread-based implementation, which:
+    - used `ThreadPoolExecutor` (Python threads share a GIL, so the
+      NumPy-bound likelihood evaluation ran serially regardless of
+      worker count);
+    - contained a `_run_simplified_mcmc` fallback that returned mock
+      samples with `rng.random()` as the likelihood, silently making
+      benchmarks meaningless;
+    - mutated `np.random` global state from multiple threads;
+    - reported a "speedup" of `max(chain_times) / mean(chain_times)`,
+      which is a load-imbalance ratio rather than a speedup.
 
-class ParallelMCMCManager:
-    """Manages parallel execution of MCMC chains."""
-    
-    def __init__(self, 
-                 n_chains: int = 4,
-                 n_workers: Optional[int] = None,
-                 backend: str = 'process',  # 'process', 'thread', or 'gpu'
-                 use_gpu: bool = False,
-                 device_ids: Optional[List[int]] = None):
-        """
-        Initialize parallel MCMC manager.
-        
-        Args:
-            n_chains: Number of MCMC chains to run in parallel
-            n_workers: Number of worker processes/threads (default: min(n_chains, cpu_count))
-            backend: Parallelization backend ('process', 'thread', or 'gpu')
-            use_gpu: Whether to use GPU acceleration
-            device_ids: List of GPU device IDs to use
-        """
-        self.n_chains = n_chains
-        self.backend = backend
-        self.use_gpu = use_gpu
-        self.device_ids = device_ids or list(range(n_chains))
-        
-        if n_workers is None:
-            self.n_workers = min(n_chains, mp.cpu_count())
-        else:
-            self.n_workers = min(n_workers, n_chains)
-        
-        # Validate backend
-        if backend not in ['process', 'thread', 'gpu']:
-            raise ValueError(f"Backend must be 'process', 'thread', or 'gpu', got {backend}")
-        
-        if backend == 'gpu' and not use_gpu:
-            warnings.warn("GPU backend requested but use_gpu=False. Falling back to process backend.")
-            self.backend = 'process'
-    
-    def run_parallel_mcmc(self, 
-                          sustain_instance,
-                          sustain_data,
-                          seq_init: np.ndarray,
-                          f_init: np.ndarray,
-                          n_iterations: int,
-                          seq_sigma: float,
-                          f_sigma: float,
-                          seeds: Optional[List[int]] = None) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[float]]:
-        """
-        Run MCMC chains in parallel.
-        
-        Args:
-            sustain_instance: SuStaIn instance (ZscoreSustain, MixtureSustain, etc.)
-            sustain_data: SuStaIn data object
-            seq_init: Initial sequence matrix
-            f_init: Initial fraction vector
-            n_iterations: Number of MCMC iterations per chain
-            seq_sigma: Sequence perturbation sigma
-            f_sigma: Fraction perturbation sigma
-            seeds: List of random seeds for each chain
-            
-        Returns:
-            Tuple of (samples_sequences, samples_fs, samples_likelihoods, chain_times)
-        """
-        if seeds is None:
-            seeds = [np.random.randint(0, 2**32) for _ in range(self.n_chains)]
-        
-        print(f"Running {self.n_chains} MCMC chains in parallel using {self.backend} backend...")
-        start_time = time.time()
-        
-        if self.backend == 'process':
-            results = self._run_process_parallel(sustain_instance, sustain_data, seq_init, f_init, 
-                                               n_iterations, seq_sigma, f_sigma, seeds)
-        elif self.backend == 'thread':
-            results = self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init, 
-                                             n_iterations, seq_sigma, f_sigma, seeds)
-        elif self.backend == 'gpu':
-            results = self._run_gpu_parallel(sustain_instance, sustain_data, seq_init, f_init, 
-                                           n_iterations, seq_sigma, f_sigma, seeds)
-        
-        total_time = time.time() - start_time
-        print(f"Parallel MCMC completed in {total_time:.2f} seconds")
-        
-        return results
-    
-    def _run_process_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
-                            n_iterations, seq_sigma, f_sigma, seeds):
-        """Run MCMC chains using process-based parallelism."""
-        # For process-based parallelism, we need to avoid pickling complex objects
-        # Instead, we'll use a simpler approach that works with the existing structure
-        
-        print("Process-based parallelism requires careful handling of object serialization.")
-        print("Falling back to thread-based parallelism for compatibility.")
-        return self._run_thread_parallel(sustain_instance, sustain_data, seq_init, f_init, 
-                                       n_iterations, seq_sigma, f_sigma, seeds)
-    
-    def _run_thread_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
-                           n_iterations, seq_sigma, f_sigma, seeds):
-        """Run MCMC chains using thread-based parallelism."""
-        print(f"Running {len(seeds)} MCMC chains in parallel using threads...")
-        
-        def run_single_chain(seed_and_index):
-            """Run a single MCMC chain with given seed."""
-            seed, chain_idx = seed_and_index
-            print(f"Starting chain {chain_idx+1}/{len(seeds)} with seed {seed}")
-            
-            try:
-                start_time = time.time()
-                
-                # Set random seed for this chain
-                np.random.seed(seed)
-                
-                # Create independent random number generator for this thread
-                thread_rng = np.random.default_rng(seed)
-                
-                # Try to use the real SuStaIn MCMC if available
-                if sustain_instance is not None and hasattr(sustain_instance, '_perform_mcmc'):
-                    try:
-                        # Set the global RNG for this thread
-                        if hasattr(sustain_instance, 'global_rng'):
-                            sustain_instance.global_rng = thread_rng
-                        
-                        # Run the real MCMC
-                        ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = \
-                            sustain_instance._perform_mcmc(sustain_data, seq_init, f_init, n_iterations, seq_sigma, f_sigma)
-                        
-                    except Exception as e:
-                        print(f"  Chain {chain_idx+1}: Real MCMC failed ({e}), using simplified version")
-                        # Fall back to simplified MCMC
-                        samples_sequence, samples_f, samples_likelihood = _run_simplified_mcmc(
-                            seq_init, f_init, n_iterations, seq_sigma, f_sigma, thread_rng, chain_idx
-                        )
-                else:
-                    # Use simplified MCMC
-                    samples_sequence, samples_f, samples_likelihood = _run_simplified_mcmc(
-                        seq_init, f_init, n_iterations, seq_sigma, f_sigma, thread_rng, chain_idx
-                    )
-                
-                chain_time = time.time() - start_time
-                print(f"  Chain {chain_idx+1} completed in {chain_time:.2f} seconds")
-                return (samples_sequence, samples_f, samples_likelihood, chain_time, chain_idx)
-                
-            except Exception as e:
-                print(f"  Chain {chain_idx+1} failed: {e}")
-                chain_time = time.time() - start_time
-                return (np.zeros_like(seq_init), np.zeros_like(f_init), 
-                       np.zeros(n_iterations), chain_time, chain_idx)
-        
-        def _run_simplified_mcmc(seq_init, f_init, n_iterations, seq_sigma, f_sigma, rng, chain_idx):
-            """Run a simplified MCMC for demonstration."""
-            n_s = seq_init.shape[0]
-            n = seq_init.shape[1]
-            
-            # Initialize with random values
-            current_seq = seq_init.copy()
-            current_f = f_init.copy()
-            
-            # Store samples
-            samples_sequence = np.zeros((n_s, n, n_iterations))
-            samples_f = np.zeros((n_s, n_iterations))
-            samples_likelihood = np.zeros(n_iterations)
-            
-            # Run MCMC iterations
-            for i in range(n_iterations):
-                # Simple random walk proposal
-                if i % 1000 == 0:
-                    print(f"  Chain {chain_idx+1}: {i}/{n_iterations} iterations")
-                
-                # Propose new sequence
-                new_seq = current_seq + rng.normal(0, seq_sigma, current_seq.shape)
-                new_f = current_f + rng.normal(0, f_sigma, current_f.shape)
-                
-                # Simple acceptance (for demonstration)
-                if rng.random() > 0.5:  # 50% acceptance rate
-                    current_seq = new_seq
-                    current_f = new_f
-                
-                # Store sample
-                samples_sequence[:, :, i] = current_seq
-                samples_f[:, i] = current_f
-                samples_likelihood[i] = rng.random()  # Mock likelihood
-            
-            return samples_sequence, samples_f, samples_likelihood
-        
-        # Prepare arguments for parallel execution
-        chain_args = [(seed, i) for i, seed in enumerate(seeds)]
-        
-        # Run chains in parallel using ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=self.n_workers) as executor:
-            # Submit all chains
-            future_to_chain = {executor.submit(run_single_chain, args): args[1] for args in chain_args}
-            
-            # Collect results as they complete
-            results = [None] * len(seeds)
-            for future in as_completed(future_to_chain):
-                chain_idx = future_to_chain[future]
-                try:
-                    result = future.result()
-                    results[chain_idx] = result
-                except Exception as e:
-                    print(f"Chain {chain_idx+1} failed with exception: {e}")
-                    results[chain_idx] = (np.zeros_like(seq_init), np.zeros_like(f_init), 
-                                        np.zeros(n_iterations), 0.0, chain_idx)
-        
-        # Extract results in correct order
-        samples_sequences = [r[0] for r in results]
-        samples_fs = [r[1] for r in results]
-        samples_likelihoods = [r[2] for r in results]
-        chain_times = [r[3] for r in results]
-        
-        return samples_sequences, samples_fs, samples_likelihoods, chain_times
-    
-    def _run_gpu_parallel(self, sustain_instance, sustain_data, seq_init, f_init, 
-                        n_iterations, seq_sigma, f_sigma, seeds):
-        """Run MCMC chains using GPU parallelism."""
-        # For GPU parallelism, we can run multiple chains on different GPUs
-        # or use GPU streams for concurrent execution
-        
-        if not hasattr(sustain_instance, 'torch_backend'):
-            raise ValueError("GPU parallelism requires TorchZScoreSustainMissingData or similar GPU-enabled class")
-        
-        # For now, fall back to process parallelism with GPU acceleration
-        print("GPU parallelism not fully implemented yet, falling back to process parallelism with GPU acceleration")
-        return self._run_process_parallel(sustain_instance, sustain_data, seq_init, f_init, 
-                                        n_iterations, seq_sigma, f_sigma, seeds)
+Usage:
 
+    from pySuStaIn import OrdinalSustain
+    from pySuStaIn.parallel_mcmc import run_parallel_chains
 
-# Worker functions removed to avoid serialization issues
-# The thread-based approach now runs chains sequentially with different seeds
-
-
-def combine_mcmc_results(samples_sequences: List[np.ndarray], 
-                        samples_fs: List[np.ndarray], 
-                        samples_likelihoods: List[np.ndarray],
-                        chain_times: List[float]) -> Tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
-    """
-    Combine results from multiple MCMC chains.
-    
-    Args:
-        samples_sequences: List of sequence samples from each chain
-        samples_fs: List of fraction samples from each chain
-        samples_likelihoods: List of likelihood samples from each chain
-        chain_times: List of execution times for each chain
-        
-    Returns:
-        Tuple of (combined_sequences, combined_fs, combined_likelihoods, stats)
-    """
-    # Combine all samples
-    combined_sequences = np.concatenate(samples_sequences, axis=2)  # Concatenate along iteration axis
-    combined_fs = np.concatenate(samples_fs, axis=1)  # Concatenate along iteration axis
-    combined_likelihoods = np.concatenate(samples_likelihoods, axis=0)  # Concatenate along iteration axis
-    
-    # Calculate statistics
-    stats = {
-        'n_chains': len(samples_sequences),
-        'total_iterations': combined_likelihoods.shape[0],
-        'chain_times': chain_times,
-        'total_time': sum(chain_times),
-        'avg_chain_time': np.mean(chain_times),
-        'max_chain_time': max(chain_times),
-        'min_chain_time': min(chain_times),
-        'speedup': max(chain_times) / (sum(chain_times) / len(chain_times)),  # Theoretical speedup
-        'efficiency': (max(chain_times) / (sum(chain_times) / len(chain_times))) / len(chain_times)
-    }
-    
-    return combined_sequences, combined_fs, combined_likelihoods, stats
-
-
-def benchmark_parallel_mcmc(sustain_instance, 
-                          sustain_data,
-                          seq_init: np.ndarray,
-                          f_init: np.ndarray,
-                          n_iterations: int = 1000,
-                          seq_sigma: float = 1.0,
-                          f_sigma: float = 0.1,
-                          n_chains_list: List[int] = [1, 2, 4, 8]) -> dict:
-    """
-    Benchmark parallel MCMC performance across different numbers of chains.
-    
-    Args:
-        sustain_instance: SuStaIn instance
-        sustain_data: SuStaIn data object
-        seq_init: Initial sequence matrix
-        f_init: Initial fraction vector
-        n_iterations: Number of MCMC iterations per chain
-        seq_sigma: Sequence perturbation sigma
-        f_sigma: Fraction perturbation sigma
-        n_chains_list: List of chain counts to benchmark
-        
-    Returns:
-        Dictionary with benchmark results
-    """
-    results = {}
-    
-    for n_chains in n_chains_list:
-        print(f"Benchmarking {n_chains} chains...")
-        
-        # Create parallel manager
-        manager = ParallelMCMCManager(n_chains=n_chains, backend='thread')
-        
-        # Run benchmark
-        start_time = time.time()
-        samples_sequences, samples_fs, samples_likelihoods, chain_times = \
-            manager.run_parallel_mcmc(sustain_instance, sustain_data, seq_init, f_init,
-                                    n_iterations, seq_sigma, f_sigma)
-        total_time = time.time() - start_time
-        
-        # Calculate speedup
-        serial_time = chain_times[0] * n_chains  # Theoretical serial time
-        speedup = serial_time / total_time
-        
-        results[n_chains] = {
-            'total_time': total_time,
-            'chain_times': chain_times,
-            'speedup': speedup,
-            'efficiency': speedup / n_chains
-        }
-        
-        print(f"  {n_chains} chains: {total_time:.2f}s, speedup: {speedup:.2f}x, efficiency: {speedup/n_chains:.2f}")
-    
-    return results
-
-
-# Example usage and integration functions
-def integrate_parallel_mcmc_with_sustain(sustain_instance, 
-                                       use_parallel_mcmc: bool = True,
-                                       n_mcmc_chains: int = 4,
-                                       mcmc_backend: str = 'process') -> None:
-    """
-    Integrate parallel MCMC with existing SuStaIn instance.
-    
-    Args:
-        sustain_instance: SuStaIn instance to modify
-        use_parallel_mcmc: Whether to use parallel MCMC
-        n_mcmc_chains: Number of MCMC chains to run in parallel
-        mcmc_backend: Backend for parallel MCMC ('process', 'thread', 'gpu')
-    """
-    if not use_parallel_mcmc:
-        return
-    
-    # Create parallel MCMC manager
-    sustain_instance.parallel_mcmc_manager = ParallelMCMCManager(
-        n_chains=n_mcmc_chains,
-        backend=mcmc_backend,
-        use_gpu=hasattr(sustain_instance, 'use_gpu') and sustain_instance.use_gpu
+    init_kwargs = dict(
+        prob_nl=prob_nl, prob_score=prob_score, score_vals=score_vals,
+        biomarker_labels=labels,
+        N_startpoints=10, N_S_max=2, N_iterations_MCMC=10000,
+        output_folder="./out", dataset_name="test",
+        use_parallel_startpoints=False, seed=42,
     )
-    
-    # Override the _estimate_uncertainty_sustain_model method
-    original_method = sustain_instance._estimate_uncertainty_sustain_model
-    
-    def parallel_uncertainty_estimation(sustainData, seq_init, f_init):
-        """Parallel version of uncertainty estimation."""
-        # Get MCMC settings
-        seq_sigma_opt, f_sigma_opt = sustain_instance._optimise_mcmc_settings(sustainData, seq_init, f_init)
-        
-        # Run parallel MCMC
-        samples_sequences, samples_fs, samples_likelihoods, chain_times = \
-            sustain_instance.parallel_mcmc_manager.run_parallel_mcmc(
-                sustain_instance, sustainData, seq_init, f_init,
-                sustain_instance.N_iterations_MCMC, seq_sigma_opt, f_sigma_opt
-            )
-        
-        # Combine results
-        combined_sequences, combined_fs, combined_likelihoods, stats = combine_mcmc_results(
-            samples_sequences, samples_fs, samples_likelihoods, chain_times
+
+    result = run_parallel_chains(
+        sustain_class=OrdinalSustain,
+        init_kwargs=init_kwargs,
+        seq_init=seq_init, f_init=f_init,
+        n_iterations=10000,
+        seq_sigma=1.0, f_sigma=0.01,
+        n_chains=4,
+    )
+
+    print(result["wall_time"], result["speedup"])
+"""
+
+from __future__ import annotations
+
+import importlib
+import multiprocessing as mp
+import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple, Type
+
+import numpy as np
+
+
+def _chain_worker(spec: Tuple[Any, ...]) -> Dict[str, Any]:
+    """Run one MCMC chain in a worker process.
+
+    Receives a fully-picklable spec, constructs a fresh SuStaIn instance,
+    runs `_perform_mcmc`, and returns its outputs. The instance is built
+    inside the worker so the parent process never has to pickle it.
+    """
+    (module_name, class_name, init_kwargs, seq_init, f_init,
+     n_iterations, seq_sigma, f_sigma, seed, chain_idx) = spec
+
+    module = importlib.import_module(module_name)
+    sustain_class = getattr(module, class_name)
+
+    # Each worker gets its own seed and runs serially internally
+    kw = dict(init_kwargs)
+    kw["seed"] = int(seed)
+    kw["use_parallel_startpoints"] = False  # no nested parallelism
+
+    sustain = sustain_class(**kw)
+
+    # AbstractSustain stores the data under a name-mangled attribute.
+    sustain_data = getattr(sustain, "_AbstractSustain__sustainData", None)
+    if sustain_data is None:
+        raise RuntimeError(
+            f"Could not locate sustainData on {class_name} instance. "
+            "Workers expect AbstractSustain's standard attribute layout."
         )
-        
-        # Find best result
-        best_idx = np.argmax(combined_likelihoods)
-        ml_sequence = combined_sequences[:, :, best_idx]
-        ml_f = combined_fs[:, best_idx]
-        ml_likelihood = combined_likelihoods[best_idx]
-        
-        print(f"Parallel MCMC stats: {stats}")
-        
-        return ml_sequence, ml_f, ml_likelihood, combined_sequences, combined_fs, combined_likelihoods
-    
-    # Replace the method
-    sustain_instance._estimate_uncertainty_sustain_model = parallel_uncertainty_estimation
+
+    rng = np.random.default_rng(int(seed))
+
+    t0 = time.perf_counter()
+    ml_sequence, ml_f, ml_likelihood, samples_sequence, samples_f, samples_likelihood = (
+        sustain._perform_mcmc(
+            sustain_data, seq_init, f_init,
+            n_iterations, seq_sigma, f_sigma, rng=rng,
+        )
+    )
+    chain_time = time.perf_counter() - t0
+
+    return {
+        "chain_idx": int(chain_idx),
+        "seed": int(seed),
+        "ml_sequence": np.asarray(ml_sequence),
+        "ml_f": np.asarray(ml_f),
+        "ml_likelihood": float(np.squeeze(ml_likelihood)),
+        "samples_sequence": np.asarray(samples_sequence),
+        "samples_f": np.asarray(samples_f),
+        "samples_likelihood": np.asarray(samples_likelihood),
+        "chain_time": chain_time,
+    }
+
+
+def _default_seeds(n_chains: int, master_seed: int = 12345) -> List[int]:
+    """Deterministic, well-spaced seeds for `n_chains` chains."""
+    ss = np.random.SeedSequence(master_seed)
+    return [int(child.generate_state(1)[0]) for child in ss.spawn(n_chains)]
+
+
+def run_parallel_chains(
+    sustain_class: Type,
+    init_kwargs: Dict[str, Any],
+    seq_init: np.ndarray,
+    f_init: np.ndarray,
+    n_iterations: int,
+    seq_sigma,
+    f_sigma,
+    n_chains: int,
+    seeds: Optional[List[int]] = None,
+    n_workers: Optional[int] = None,
+    master_seed: int = 12345,
+) -> Dict[str, Any]:
+    """Run `n_chains` independent MCMC chains in parallel processes.
+
+    Args:
+        sustain_class: SuStaIn class (e.g. `OrdinalSustain`). Must be
+            importable by module path — not a class defined in `__main__`
+            or inside another function — because workers import it by
+            `(module_name, class_name)`.
+        init_kwargs: kwargs for `sustain_class(**init_kwargs)`. Must be
+            picklable (numpy arrays and primitives are; lambdas and open
+            file handles are not). The chain's `seed` is set
+            automatically; `use_parallel_startpoints` is forced to False
+            to avoid nested parallelism inside each worker.
+        seq_init: initial sequence matrix, shape (N_S, N).
+        f_init: initial fraction vector, shape (N_S,).
+        n_iterations: MCMC iterations per chain.
+        seq_sigma, f_sigma: proposal scales (the values
+            `_optimise_mcmc_settings` would return).
+        n_chains: number of chains to run.
+        seeds: optional explicit seeds, length `n_chains`. If None,
+            seeds are spawned deterministically from `master_seed`.
+        n_workers: number of worker processes. Defaults to
+            `min(n_chains, mp.cpu_count())`.
+        master_seed: seed source when `seeds` is None.
+
+    Returns:
+        A dict with:
+            "chains": list of per-chain dicts (see `_chain_worker`)
+                ordered by chain_idx.
+            "wall_time": total wall-clock seconds for the parallel run.
+            "chain_times": per-chain execution times (seconds).
+            "speedup": sum(chain_times) / wall_time. A chain count of 1
+                gives ~1.0; a fully parallel run on enough cores
+                approaches `n_chains`.
+            "efficiency": speedup / n_workers.
+            "n_workers": worker count actually used.
+    """
+    if sustain_class.__module__ == "__main__":
+        raise ValueError(
+            "sustain_class must be defined in an importable module, not "
+            "__main__ — workers cannot resolve __main__ classes by name."
+        )
+    if seeds is None:
+        seeds = _default_seeds(n_chains, master_seed=master_seed)
+    elif len(seeds) != n_chains:
+        raise ValueError(
+            f"len(seeds) ({len(seeds)}) != n_chains ({n_chains})"
+        )
+    if n_workers is None:
+        n_workers = min(n_chains, mp.cpu_count())
+
+    module_name = sustain_class.__module__
+    class_name = sustain_class.__name__
+
+    specs = [
+        (
+            module_name, class_name, init_kwargs,
+            np.asarray(seq_init), np.asarray(f_init),
+            int(n_iterations), seq_sigma, f_sigma,
+            int(seed), idx,
+        )
+        for idx, seed in enumerate(seeds)
+    ]
+
+    # Always use spawn — works on macOS/Windows, doesn't inherit
+    # parent state (notably matplotlib backends, CUDA contexts, etc.)
+    ctx = mp.get_context("spawn")
+
+    chain_results: List[Optional[Dict[str, Any]]] = [None] * n_chains
+
+    wall_t0 = time.perf_counter()
+    with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx) as executor:
+        future_to_idx = {executor.submit(_chain_worker, s): s[-1] for s in specs}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            result = future.result()  # propagate exceptions
+            chain_results[idx] = result
+    wall_time = time.perf_counter() - wall_t0
+
+    # All slots must be filled (futures either return or raise)
+    for i, r in enumerate(chain_results):
+        if r is None:
+            raise RuntimeError(f"Chain {i} produced no result.")
+
+    chain_times = [r["chain_time"] for r in chain_results]
+    serial_time = float(sum(chain_times))
+    speedup = serial_time / wall_time if wall_time > 0 else float("nan")
+
+    return {
+        "chains": chain_results,  # ordered by chain_idx
+        "wall_time": wall_time,
+        "chain_times": chain_times,
+        "speedup": speedup,
+        "efficiency": speedup / n_workers if n_workers > 0 else float("nan"),
+        "n_workers": n_workers,
+    }
+
+
+def combine_chain_samples(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Pool samples across chains for downstream summarisation.
+
+    Concatenates along the MCMC-iteration axis. Each chain remains
+    a separate Markov chain — this is purely a convenience for code
+    that consumes a single (N_S, N, total_iters) sample tensor.
+
+    Returns:
+        Dict with keys:
+            "samples_sequence": (N_S, N, n_chains * n_iterations)
+            "samples_f":        (N_S, n_chains * n_iterations)
+            "samples_likelihood": (n_chains * n_iterations, 1)
+            "ml_sequence", "ml_f", "ml_likelihood":
+                argmax across all chains.
+            "per_chain_ml_likelihood": list of length n_chains.
+    """
+    chains = result["chains"]
+    samples_sequence = np.concatenate(
+        [c["samples_sequence"] for c in chains], axis=2
+    )
+    samples_f = np.concatenate([c["samples_f"] for c in chains], axis=1)
+
+    likelihoods = [np.asarray(c["samples_likelihood"]).reshape(-1, 1) for c in chains]
+    samples_likelihood = np.concatenate(likelihoods, axis=0)
+
+    # Find ML across the pooled samples
+    flat = samples_likelihood.ravel()
+    best = int(np.argmax(flat))
+    ml_likelihood = float(flat[best])
+    ml_sequence = samples_sequence[:, :, best]
+    ml_f = samples_f[:, best]
+
+    return {
+        "samples_sequence": samples_sequence,
+        "samples_f": samples_f,
+        "samples_likelihood": samples_likelihood,
+        "ml_sequence": ml_sequence,
+        "ml_f": ml_f,
+        "ml_likelihood": ml_likelihood,
+        "per_chain_ml_likelihood": [c["ml_likelihood"] for c in chains],
+    }
