@@ -1,31 +1,29 @@
 #!/bin/bash
-# Dispatch SuStaIn jobs across multiple RTX 3090 towers
-# Each tower has 2 GPUs, so can run 2 jobs simultaneously
+# Dispatch SuStaIn jobs across 2 RTX 3090 towers
+# Each tower has 2 GPUs = 4 GPUs total
 
 # Tower IPs (update these after setup)
 TOWER1="192.168.1.101"
 TOWER2="192.168.1.102"
-TOWER3="192.168.1.103"
 
 # Your username on the towers
 USER="yourusername"
 
 # Commands to run (each uses 1 GPU)
 declare -a JOBS=(
-    # Model selection k=1 to k=5
+    # Model selection k=1 to k=4 (parallel on 4 GPUs)
     "cd ~/mphil && conda activate sustain && python run_model_selection_8k.py --k=1 --gpu=0 --output=results/k1"
     "cd ~/mphil && conda activate sustain && python run_model_selection_8k.py --k=2 --gpu=1 --output=results/k2"
     "cd ~/mphil && conda activate sustain && python run_model_selection_8k.py --k=3 --gpu=0 --output=results/k3"
     "cd ~/mphil && conda activate sustain && python run_model_selection_8k.py --k=4 --gpu=1 --output=results/k4"
-    "cd ~/mphil && conda activate sustain && python run_model_selection_8k.py --k=5 --gpu=0 --output=results/k5"
 )
 
 # Map jobs to towers and GPUs
 # Tower 1: GPU 0 (k=1), GPU 1 (k=2)
 # Tower 2: GPU 0 (k=3), GPU 1 (k=4)
-# Tower 3: GPU 0 (k=5), GPU 1 (spare)
+# k=5 can run afterwards on any GPU
 
-echo "=== Dispatching jobs to RTX 3090 towers ==="
+echo "=== Dispatching jobs to 2 RTX 3090 towers (4 GPUs) ==="
 echo ""
 
 # Tower 1 - k=1 and k=2
@@ -42,13 +40,11 @@ ssh $USER@$TOWER2 "nohup ${JOBS[2]} > logs/k3.log 2>&1 &" && echo "    ✓ Start
 echo "  GPU 1: k=4"
 ssh $USER@$TOWER2 "nohup ${JOBS[3]} > logs/k4.log 2>&1 &" && echo "    ✓ Started"
 
-# Tower 3 - k=5
-echo "Tower 3 ($TOWER3):"
-echo "  GPU 0: k=5"
-ssh $USER@$TOWER3 "nohup ${JOBS[4]} > logs/k5.log 2>&1 &" && echo "    ✓ Started"
-
 echo ""
-echo "=== All jobs dispatched! ==="
+echo "=== All 4 parallel jobs dispatched! ==="
+echo ""
+echo "To run k=5 after k=1-4 complete:"
+echo "  ssh $USER@$TOWER1 'cd ~/mphil && conda activate sustain && python run_model_selection_8k.py --k=5 --gpu=0 --output=results/k5 > logs/k5.log 2>&1 &'"
 echo ""
 echo "Monitor progress:"
 echo "  ./monitor_towers.sh"

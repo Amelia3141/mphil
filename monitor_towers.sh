@@ -1,10 +1,9 @@
 #!/bin/bash
 # Monitor GPU usage and job progress across all towers
 
-# Tower IPs
+# Tower IPs (2 towers, 4 GPUs total)
 TOWER1="192.168.1.101"
 TOWER2="192.168.1.102"
-TOWER3="192.168.1.103"
 USER="yourusername"
 
 echo "=== RTX 3090 Tower Status ==="
