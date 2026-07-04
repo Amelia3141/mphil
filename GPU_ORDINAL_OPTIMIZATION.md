@@ -1,306 +1,165 @@
 # GPU-Accelerated OrdinalSustain Implementation
 
-This document describes the GPU optimization of the OrdinalSustain algorithm using PyTorch.
+This document describes the GPU optimization of the OrdinalSustain algorithm using
+PyTorch (`pySuStaIn/TorchOrdinalSustain.py` + `pySuStaIn/torch_likelihood.py`).
+
+> **2026-07 correction.** An earlier version of this file described a naive
+> *per-stage GPU loop* and quoted a 10–20× speedup copied from the ZScore
+> benchmarks. Both were inaccurate. The code has since been rewritten to a single
+> **batched gather** kernel (no per-stage loop), and the speedup claims here have
+> been replaced with what the implementation actually guarantees plus honest,
+> data-size-dependent expectations that must be measured on real CUDA hardware.
 
 ## Overview
 
-We have successfully implemented a GPU-accelerated version of OrdinalSustain that follows the same optimization strategy used in fastSuStaIn's ZScoreSustain implementation. The new `TorchOrdinalSustain` class provides significant speedup (10-20x expected) while maintaining full API compatibility with the original implementation.
+`TorchOrdinalSustain` is a drop-in subclass of `OrdinalSustain`. It overrides
+**only** the likelihood computation (`_calculate_likelihood_stage` and
+`_calculate_likelihood`) and dispatches those to the GPU. Everything else — EM,
+MCMC, `_optimise_parameters`, RNG, accept/reject — is inherited unchanged. This is
+what guarantees the GPU run reproduces the CPU result rather than being a different
+algorithm.
 
-## How the Speedup Was Achieved
+## How the speedup is achieved (and why it is bounded)
 
-### 1. **Optimization Strategy**
+### The ordinal likelihood has a sequential dependency — but it is index-only
 
-The speedup comes from applying the same techniques used in `TorchZScoreSustainMissingData`:
+Which biomarkers are "abnormal" at stage *j* depends on stages 0…*j-1*. That
+dependency is **pure index logic that never touches the data**. The implementation
+exploits this:
 
-- **GPU Acceleration via PyTorch**: All numerical computations moved to GPU
-- **Vectorization**: Operations parallelized across all subjects simultaneously
-- **Memory-Efficient Broadcasting**: Using `.expand()` instead of `.tile()` to avoid memory copies
-- **Batch Processing**: Computing probabilities for all subjects in parallel
+1. **(CPU, microseconds)** Walk the sequence `S` once to build a padded index
+   matrix: for each of the `N+1` stages, which columns of a combined
+   `[log_prob_score | log_prob_nl]` tensor should be summed.
+2. **(GPU, one batched op)** Gather all those columns for all stages at once via
+   advanced indexing, mask out padding, sum across columns, and `exp`. That is
+   **~4 GPU kernels per call, independent of `N`** — not `N` small kernels.
 
-### 2. **Key Components**
+The expensive part — `log(prob_score)` / `log(prob_nl)` and their concatenation
+into an `(M, N+B)` tensor — is **cached once per `sustainData` object** and reused
+across every MCMC iteration (`get_log_combined_torch()` in
+`torch_data_classes.py`).
 
-#### A. TorchOrdinalLikelihoodCalculator (`torch_likelihood.py`)
+### Why the old per-stage loop was removed
 
-The core GPU-accelerated likelihood calculator that implements the ordinal probability computations:
+A straightforward port keeps the `for j in range(N)` loop on the GPU, launching one
+small kernel per stage (~38 stages for 19 biomarkers × 2 levels). Per the kernel's
+own docstring, that version ran **~11× slower than CPU** — the per-stage kernel
+launch overhead dwarfs the tiny per-stage arithmetic. The batched-gather rewrite
+gives the GPU enough work per call to overcome launch overhead, which is the whole
+point of the current design.
 
-```python
-class TorchOrdinalLikelihoodCalculator(TorchLikelihoodCalculator):
-    def _calculate_likelihood_stage_torch(self, sustainData, S_single):
-        # Convert prob_nl and prob_score to GPU tensors
-        prob_nl_tensor = sustainData.get_prob_nl_torch()  # (M, B)
-        prob_score_tensor = sustainData.get_prob_score_torch()  # (M, N)
+### What limits the end-to-end speedup
 
-        # Sequential stage loop (algorithmic requirement)
-        for j in range(N):
-            # OPTIMIZATION: Vectorized across all M subjects
-            prod_prob_abnormal = torch.prod(prob_abnormal, dim=1)  # GPU parallel
-            prod_prob_normal = torch.prod(prob_normal, dim=1)      # GPU parallel
-            p_perm_k[:, j + 1] = coeff * prod_prob_abnormal * prod_prob_normal
+- **Amdahl's law.** Only the likelihood runs on GPU. MCMC proposal generation,
+  accept/reject, EM convergence, and RNG stay on CPU by design (that is what keeps
+  results identical). The end-to-end speedup is therefore capped by the fraction of
+  runtime spent in the likelihood — even an infinitely fast GPU likelihood yields a
+  finite overall speedup.
+- **Residual per-call host work.** The gather-index matrix is rebuilt in NumPy each
+  call and a small int tensor is copied host→device. This cannot be cached because
+  `S` changes every MCMC step. At small subject counts this overhead can erase the
+  gain; at large `M` the GPU gather over all subjects dominates and amortises it.
+- **Sweet spot = large M.** The design wins most at DICE scale (~10k subjects),
+  where the per-subject parallelism is large relative to the fixed per-call cost.
+
+## Numerical correctness (verified)
+
+`use_gpu=True, force_float64=True` runs the identical algorithm at float64 for
+exact CPU equivalence; `force_float64=False` uses float32 for production speed.
+`use_gpu=True` engages CUDA **only when `torch.cuda.is_available()`** — otherwise it
+falls back to CPU/float64 with a warning (it does not use Apple MPS).
+
+Verified locally (CPU tensors, since no CUDA was available on the dev machine — the
+gather/sum/exp kernel runs the same code on CPU and CUDA tensors):
+
+| Check | Result |
+|-------|--------|
+| Batched-gather kernel vs CPU `_calculate_likelihood_stage` (20 sequences, n=800×19) | **max abs diff 8.7e-19** (identical) |
+| `_calculate_likelihood_stage` full validation (10 sequences) | 0.00e+00 |
+| `_calculate_likelihood` mixture, N_S=1 and N_S=2 | 0.00e+00 |
+| Data-subset handling (reindex) | 0.00e+00 |
+| Full `run_sustain_algorithm` pipeline | 100% stage match, corr 1.0 |
+
+Run it: `python benchmark_ordinal_gpu.py --validate-only`.
+
+## Performance expectations
+
+**There is no verified speedup table yet** — the numbers must be measured on the
+target GPU. The earlier "10–20×" figures were carried over from the ZScore model,
+which is more vectorizable than the ordinal model and is **not** a valid proxy.
+
+Realistic guidance for the ordinal path:
+
+- Expect a **single-digit end-to-end multiple** (Amdahl-bounded), best at large `M`.
+- Very small datasets may see little or no gain, or a slowdown, due to per-call host
+  overhead.
+- Measure before committing to a full run:
+
+```bash
+python benchmark_ordinal_gpu.py            # validation + CPU-vs-GPU table up to DICE scale
 ```
 
-**Key Optimization**: While the stage loop cannot be removed (algorithmic dependency), all operations *within* each iteration are fully vectorized across subjects using GPU parallelism.
-
-#### B. TorchOrdinalSustain (`TorchOrdinalSustain.py`)
-
-The wrapper class that maintains API compatibility:
-
-```python
-class TorchOrdinalSustain(OrdinalSustain):
-    def __init__(self, ..., use_gpu=True, device_id=None):
-        super().__init__(...)  # Initialize parent class
-
-        # Initialize PyTorch backend
-        self.torch_backend = create_torch_backend(use_gpu, device_id)
-
-        # Create GPU-accelerated data and calculator
-        self.torch_sustain_data = create_torch_ordinal_data(...)
-        self.torch_likelihood_calculator = create_ordinal_likelihood_calculator(...)
-```
-
-**Key Features**:
-- Automatic GPU/CPU fallback on OOM errors
-- Performance monitoring
-- Dynamic device switching
-- Full backward compatibility
-
-#### C. TorchOrdinalSustainData (`torch_data_classes.py`)
-
-Already existed in the codebase! The data structure was pre-built:
-
-```python
-class TorchOrdinalSustainData(TorchAbstractSustainData):
-    def get_prob_nl_torch(self) -> torch.Tensor:
-        return self.to_torch('prob_nl')
-
-    def get_prob_score_torch(self) -> torch.Tensor:
-        return self.to_torch('prob_score')
-```
-
-### 3. **Optimization Techniques Comparison**
-
-| Technique | Original NumPy | GPU-Accelerated PyTorch |
-|-----------|----------------|-------------------------|
-| **Data Transfer** | N/A | One-time GPU transfer |
-| **Probability Products** | `np.prod(arr, axis=1)` | `torch.prod(tensor, dim=1)` on GPU |
-| **Boolean Indexing** | `arr[:, bool_mask]` | `tensor[:, bool_mask]` on GPU |
-| **Sequential Loop** | ✓ (unavoidable) | ✓ (unavoidable) |
-| **Subject Parallelization** | ✗ | ✓ (GPU threads) |
-| **Memory Tiling** | `np.tile()` copies | `.expand()` zero-copy |
-
-### 4. **Why the Stage Loop Cannot Be Removed**
-
-The OrdinalSustain algorithm has an inherent sequential dependency:
-
-```python
-# Stage j depends on stage j-1 state
-index_reached[biomarker_justreached] = index_justreached  # State update
-```
-
-Each stage must know which biomarkers reached abnormality in previous stages. This is a **fundamental algorithmic constraint**, not an implementation limitation.
-
-However, within each stage, we achieve full parallelization across all subjects.
-
-## Files Modified/Created
-
-### Modified Files:
-1. **`pySuStaIn/torch_likelihood.py`**
-   - Added `TorchOrdinalLikelihoodCalculator` class
-   - Added `create_ordinal_likelihood_calculator()` factory function
-
-2. **`pySuStaIn/__init__.py`**
-   - Exported `TorchOrdinalSustain` and `TorchZScoreSustainMissingData`
-
-### Created Files:
-1. **`pySuStaIn/TorchOrdinalSustain.py`** (369 lines)
-   - Main GPU-accelerated OrdinalSustain implementation
-   - Wrapper class with GPU/CPU fallback
-   - Performance monitoring utilities
-   - Benchmarking helper functions
-
-2. **`benchmark_ordinal_gpu.py`** (356 lines)
-   - Comprehensive validation suite
-   - Performance benchmarking across multiple dataset sizes
-   - Correctness verification (CPU vs GPU results)
-
-3. **`GPU_ORDINAL_OPTIMIZATION.md`** (this file)
-   - Complete documentation of the optimization
+The benchmark prints CPU vs GPU timings for `_calculate_likelihood_stage` and for
+the full pipeline at 100 → 15000 subjects, which is the real basis for planning.
 
 ## Usage Example
 
 ```python
 from pySuStaIn import TorchOrdinalSustain
 
-# Create GPU-accelerated instance
 ordinal_sustain = TorchOrdinalSustain(
     prob_nl=prob_nl,           # (M, B) normal probabilities
     prob_score=prob_score,     # (M, B, num_scores) score probabilities
     score_vals=score_vals,     # (B, num_scores) score value matrix
-    biomarker_labels=labels,   # List of biomarker names
+    biomarker_labels=labels,
     N_startpoints=25,
     N_S_max=3,
     N_iterations_MCMC=100000,
     output_folder="./output",
     dataset_name="my_data",
-    use_parallel_startpoints=True,
+    use_parallel_startpoints=False,   # single-process path for the GPU run
     seed=42,
-    use_gpu=True,              # 🔥 Enable GPU acceleration
-    device_id=0                # Optional: specific GPU device
+    use_gpu=True,              # engages CUDA if available, else CPU fallback
+    force_float64=False,       # float32 = speed; True = exact CPU-equivalent validation
 )
 
-# Run SuStaIn (uses GPU automatically)
-samples_sequence, samples_f, samples_likelihood = ordinal_sustain.run_sustain_algorithm()
-
-# Check performance stats
-stats = ordinal_sustain.get_performance_stats()
-print(f"GPU speedup achieved!")
+results = ordinal_sustain.run_sustain_algorithm()
 ```
 
-## Performance Expectations
-
-Based on the ZScoreSustain GPU implementation benchmarks:
-
-| Dataset Size | CPU Time | GPU Time | Speedup |
-|-------------|----------|----------|---------|
-| 100 subjects, 5 biomarkers | ~0.05s | ~0.005s | 10x |
-| 1000 subjects, 10 biomarkers | ~0.5s | ~0.04s | 12x |
-| 2000 subjects, 15 biomarkers | ~1.5s | ~0.08s | 18x |
-| 10000 subjects, 20 biomarkers | ~10s | ~0.5s | 20x |
-
-**Note**: Speedup increases with dataset size due to better GPU utilization.
-
-## Validation
-
-The implementation has been validated to ensure correctness:
-
-1. **Numerical Accuracy**: GPU and CPU results match within floating-point tolerance (1e-5)
-2. **API Compatibility**: Drop-in replacement for `OrdinalSustain`
-3. **Fallback Handling**: Automatic CPU fallback on GPU OOM errors
-
-Run validation:
-```bash
-python benchmark_ordinal_gpu.py
-```
-
-## Architecture Diagram
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    TorchOrdinalSustain                       │
-│                  (Wrapper/API Compatibility)                 │
-├─────────────────────────────────────────────────────────────┤
-│  • Inherits from OrdinalSustain                             │
-│  • Manages GPU/CPU switching                                │
-│  • Handles OOM errors with fallback                         │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-                 ├──────────────┬──────────────────────────────┐
-                 │              │                              │
-         ┌───────▼────────┐ ┌──▼──────────────┐ ┌────────────▼──────────┐
-         │ TorchBackend   │ │ TorchOrdinal    │ │ TorchOrdinalLikelihood│
-         │                │ │ SustainData     │ │     Calculator        │
-         └────────────────┘ └─────────────────┘ └───────────────────────┘
-                 │              │                              │
-         ┌───────▼────────┐ ┌──▼─────────┐    ┌──────────────▼──────┐
-         │ DeviceManager  │ │ prob_nl    │    │ _calculate_         │
-         │ • CPU/GPU      │ │ prob_score │    │ likelihood_stage_   │
-         │ • Memory mgmt  │ │ (tensors)  │    │ torch()             │
-         └────────────────┘ └────────────┘    └─────────────────────┘
-                                                         │
-                                                ┌────────▼─────────┐
-                                                │ GPU Kernels:     │
-                                                │ • torch.prod()   │
-                                                │ • boolean index  │
-                                                │ • vectorized ops │
-                                                └──────────────────┘
+TorchOrdinalSustain  (subclass of OrdinalSustain)
+  • inherits EM / MCMC / staging unchanged  -> identical results
+  • overrides _calculate_likelihood_stage / _calculate_likelihood -> GPU dispatch
+  • OOM fallback to the CPU superclass method
+        │
+        ├── TorchSustainBackend / DeviceManager   (CPU-or-CUDA, dtype, memory)
+        ├── TorchOrdinalSustainData               (prob_nl, prob_score, cached log_combined)
+        └── TorchOrdinalLikelihoodCalculator
+                _calculate_likelihood_stage_torch():
+                  CPU: build padded gather-index matrix by walking S
+                  GPU: gather -> mask -> sum -> exp   (~4 kernels, no per-stage loop)
 ```
 
-## Comparison with FastSuStaIn's Approach
+## Files
 
-Our implementation follows the exact same pattern as `TorchZScoreSustainMissingData`:
+- `pySuStaIn/torch_likelihood.py` — `TorchOrdinalLikelihoodCalculator` (the batched
+  gather kernel) + `create_ordinal_likelihood_calculator()`
+- `pySuStaIn/TorchOrdinalSustain.py` — the drop-in subclass and GPU dispatch
+- `pySuStaIn/torch_data_classes.py` — `TorchOrdinalSustainData`, `get_log_combined_torch()` cache
+- `pySuStaIn/torch_backend.py` — device/precision management, `force_float64`
+- `benchmark_ordinal_gpu.py` — validation suite + CPU-vs-GPU benchmarks
 
-### Similarities:
-1. ✓ Wrapper class inheriting from original implementation
-2. ✓ PyTorch backend with device management
-3. ✓ Automatic GPU/CPU fallback
-4. ✓ Performance monitoring
-5. ✓ Factory functions for easy instantiation
-6. ✓ Existing TorchOrdinalSustainData class reused
+## Future improvements
 
-### Why OrdinalSustain Was Not Optimized in FastSuStaIn:
-
-Looking at the fastSuStaIn repository:
-- `TorchZScoreSustainMissingData.py` exists ✓
-- `TorchOrdinalSustain.py` does NOT exist ✗
-
-**Our implementation fills this gap!**
-
-## Technical Details
-
-### GPU Memory Management
-
-```python
-try:
-    result = self.torch_likelihood_calculator._calculate_likelihood_stage_torch(...)
-except RuntimeError as e:
-    if "out of memory" in str(e):
-        print("GPU out of memory, falling back to CPU")
-        self.torch_backend.clear_cache()
-        return super()._calculate_likelihood_stage(sustainData, S)
-```
-
-### Vectorization Pattern
-
-```python
-# Original CPU (sequential across subjects):
-for m in range(M):  # ← Sequential subject loop
-    prob_abnormal[m] = np.prod(prob_score[m, indices])
-    prob_normal[m] = np.prod(prob_nl[m, mask])
-
-# GPU (vectorized across subjects):
-prod_prob_abnormal = torch.prod(prob_score[:, indices], dim=1)  # ← All subjects at once!
-prod_prob_normal = torch.prod(prob_nl[:, mask], dim=1)
-```
-
-## Dependencies
-
-Required packages (already in `requirements.txt`):
-- `torch >= 1.9.0` (for GPU support)
-- `numpy >= 1.18`
-- `scipy`
-- `matplotlib`
-- `tqdm`
-- `scikit-learn`
-
-## Future Improvements
-
-Potential further optimizations:
-
-1. **Multi-GPU Support**: Parallelize across multiple sequences (subtypes)
-2. **Mixed Precision**: Use float16 for 2x memory reduction
-3. **Custom CUDA Kernels**: Hand-optimized kernels for specific operations
-4. **Sequence Batching**: Process multiple sequences simultaneously
-
-## Conclusion
-
-The GPU-accelerated `TorchOrdinalSustain` implementation:
-
-✅ **Achieves 10-20x speedup** (expected based on ZScore benchmarks)
-✅ **Maintains numerical correctness** (validated against CPU)
-✅ **Preserves API compatibility** (drop-in replacement)
-✅ **Follows fastSuStaIn patterns** (consistent with existing GPU code)
-✅ **Handles edge cases** (OOM fallback, device switching)
-
-**This optimization enables SuStaIn to scale to much larger datasets!**
+1. Keep the gather-index construction on-device to remove the per-call host→device
+   transfer (the main residual overhead).
+2. Batch across subtypes (sequences) so N_S>1 dispatches in one kernel.
+3. Mixed precision (float16) for very large `M`.
 
 ## References
 
 - Original SuStaIn paper: https://doi.org/10.1038/s41467-018-05892-0
 - Ordinal SuStaIn paper: https://doi.org/10.3389/frai.2021.613261
-- FastSuStaIn repository: https://github.com/edlowther/fastSuStaIn
 - PyTorch documentation: https://pytorch.org/docs/
-
----
-
-**Authors**: GPU Migration Team
-**Date**: November 2025
-**License**: Same as pySuStaIn (TBC)
