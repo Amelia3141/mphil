@@ -27,9 +27,18 @@
 
 ### Why it works
 - `_calculate_likelihood_stage()` is called **hundreds of thousands of times** during a SuStaIn run
-- Each call does `torch.prod()` across all M subjects on GPU — massively parallel
-- The sequential loop over N stages (~22 iterations) stays as a Python loop, but within each iteration the subject-level computation is vectorized across all M subjects on GPU
+- The per-stage Python loop was later removed: the stage-dependency is pure index
+  logic (which biomarkers are abnormal at each stage), so it is precomputed on CPU
+  into a gather-index matrix, then **all N+1 stages are computed in one batched
+  GPU op** (gather → mask → sum → exp, ~4 kernels/call, independent of N) across
+  all M subjects. `log(prob_score)|log(prob_nl)` is cached once per dataset.
 - No algorithm logic changes = **no confounding factors**
+
+> Note: the "Validation Results (Local)" table below reflects the earlier state.
+> The batched kernel has since been verified against the CPU reference at float64
+> (max diff ~8.7e-19). See `GPU_ORDINAL_OPTIMIZATION.md` for the current kernel
+> description and honest, data-size-dependent speedup guidance (the ordinal path is
+> **not** a simple 2–4x like the Z-score model; measure it on the target GPU).
 
 ---
 
